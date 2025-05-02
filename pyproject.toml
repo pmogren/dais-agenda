@@ -1,0 +1,28 @@
+[project]
+name = "dais-agenda"
+version = "0.1.0"
+description = "Help plan attendance to Databricks Data + AI Summit"
+authors = [
+    {name = "Paul Mogren", email = "pmogren@gmail.com"}
+]
+dependencies = [
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "pandas>=2.0.0",
+    "rich>=13.0.0",
+    "typer>=0.9.0",
+    "selenium>=4.0.0",
+    "webdriver-manager>=4.0.0"
+]
+requires-python = ">=3.13"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"] 
