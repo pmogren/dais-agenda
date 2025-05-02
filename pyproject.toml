@@ -3,7 +3,7 @@ name = "dais-agenda"
 version = "0.1.0"
 description = "Help plan attendance to Databricks Data + AI Summit"
 authors = [
-    {name = "Paul Mogren", email = "pmogren@gmail.com"}
+    {name = "Paul Mogren", email = "paul.mogren@rithum.com"}
 ]
 dependencies = [
     "requests>=2.31.0",
