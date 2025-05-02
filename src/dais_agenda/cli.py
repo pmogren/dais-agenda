@@ -8,6 +8,8 @@ from rich.panel import Panel
 from rich.markdown import Markdown
 from datetime import datetime
 import logging
+import click
+from .user_data import UserDataManager, UserRating
 
 from .session_manager import SessionManager
 
@@ -197,6 +199,108 @@ def scrape():
         console.print(f"[green]Successfully saved {len(sessions)} sessions[/green]")
     else:
         console.print("[red]No sessions were found or saved[/red]")
+
+@click.group()
+@click.option('--data-dir', type=click.Path(), default='data/user_data',
+              help='Directory to store user data')
+@click.pass_context
+def cli(ctx, data_dir):
+    """Manage your Data + AI Summit session ratings and tags."""
+    ctx.obj = UserDataManager(Path(data_dir))
+
+@cli.command()
+@click.argument('session_id')
+@click.argument('rating', type=click.IntRange(1, 5))
+@click.option('--notes', help='Additional notes about the session')
+@click.option('--tags', help='Comma-separated list of tags')
+@click.pass_obj
+def rate(manager: UserDataManager, session_id: str, rating: int, notes: Optional[str], tags: Optional[str]):
+    """Rate a session and optionally add tags."""
+    tag_list = [t.strip() for t in tags.split(',')] if tags else []
+    user_rating = UserRating(
+        session_id=session_id,
+        rating=rating,
+        notes=notes,
+        tags=tag_list
+    )
+    manager.add_rating(user_rating)
+    click.echo(f"Added rating for session {session_id}")
+
+@cli.command()
+@click.argument('session_id')
+@click.pass_obj
+def show_ratings(manager: UserDataManager, session_id: str):
+    """Show all ratings for a session."""
+    ratings = manager.get_ratings(session_id)
+    if not ratings:
+        click.echo(f"No ratings found for session {session_id}")
+        return
+    
+    click.echo(f"\nRatings for session {session_id}:")
+    for rating in ratings:
+        click.echo(f"Rating: {rating.rating}/5")
+        if rating.notes:
+            click.echo(f"Notes: {rating.notes}")
+        if rating.tags:
+            click.echo(f"Tags: {', '.join(rating.tags)}")
+        click.echo("---")
+
+@cli.command()
+@click.argument('session_id')
+@click.pass_obj
+def show_tags(manager: UserDataManager, session_id: str):
+    """Show all tags for a session."""
+    tags = manager.get_session_tags(session_id)
+    if not tags:
+        click.echo(f"No tags found for session {session_id}")
+        return
+    
+    click.echo(f"\nTags for session {session_id}:")
+    for tag in tags:
+        click.echo(f"- {tag}")
+
+@cli.command()
+@click.pass_obj
+def list_tags(manager: UserDataManager):
+    """List all tags and their usage count."""
+    tag_counts = manager.get_all_tags()
+    if not tag_counts:
+        click.echo("No tags found")
+        return
+    
+    click.echo("\nAll tags and their usage count:")
+    for tag, count in sorted(tag_counts.items(), key=lambda x: x[1], reverse=True):
+        click.echo(f"{tag}: {count}")
+
+@cli.command()
+@click.argument('session_id')
+@click.argument('user_id')
+@click.pass_obj
+def delete_rating(manager: UserDataManager, session_id: str, user_id: str):
+    """Delete a rating for a session."""
+    manager.delete_rating(session_id, user_id)
+    click.echo(f"Deleted rating for session {session_id}")
+
+@cli.command()
+@click.argument('session_id')
+@click.argument('rating', type=click.IntRange(1, 5))
+@click.option('--notes', help='Additional notes about the session')
+@click.option('--tags', help='Comma-separated list of tags')
+@click.option('--user-id', required=True, help='User ID of the rating to update')
+@click.pass_obj
+def update_rating(manager: UserDataManager, session_id: str, rating: int, notes: Optional[str], 
+                 tags: Optional[str], user_id: str):
+    """Update an existing rating."""
+    tag_list = [t.strip() for t in tags.split(',')] if tags else []
+    user_rating = UserRating(
+        session_id=session_id,
+        rating=rating,
+        notes=notes,
+        tags=tag_list,
+        user_id=user_id
+    )
+    manager.update_rating(user_rating)
+    click.echo(f"Updated rating for session {session_id}")
 
 if __name__ == "__main__":
     app() 
