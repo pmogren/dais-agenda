@@ -224,6 +224,9 @@ class DaisScraperV2:
     def save_sessions(self, sessions: List[Dict]):
         """Save session data to JSONL files."""
         try:
+            # Sort sessions by session_id
+            sessions = sorted(sessions, key=lambda x: x["session_id"])
+            
             # Save all sessions
             all_sessions_file = self.sessions_dir / "sessions_.jsonl"
             with open(all_sessions_file, "w") as f:
@@ -240,6 +243,8 @@ class DaisScraperV2:
                 tracks[track].append(session)
             
             for track, track_sessions in tracks.items():
+                # Sort track sessions by session_id
+                track_sessions = sorted(track_sessions, key=lambda x: x["session_id"])
                 track_file = self.sessions_dir / f"sessions_{track.lower().replace(' ', '_')}.jsonl"
                 with open(track_file, "w") as f:
                     for session in track_sessions:
