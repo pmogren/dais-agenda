@@ -15,11 +15,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import uuid
 import ast
-import argparse
 
 logger = logging.getLogger(__name__)
 
-class DaisScraper:
+class DaisScraperV2:
     def __init__(self, data_dir: str = "data", preview_mode: bool = False, preview_count: int = 3):
         self.data_dir = Path(data_dir)
         self.sessions_dir = self.data_dir / "sessions"
@@ -308,14 +307,15 @@ class DaisScraper:
                             if "agenda" in page_props:
                                 logger.info("Found agenda data in pageProps")
                                 new_sessions = self.extract_session_data(page_props["agenda"], url)
-                                sessions.extend(new_sessions)
+                                if new_sessions:
+                                    sessions.extend(new_sessions)
+                                    continue
                     
                     # If no sessions found in Next.js data, try DOM extraction
-                    if not sessions:
-                        dom_data = self.extract_session_data_from_dom()
-                        if dom_data:
-                            logger.info("Found session data in DOM")
-                            sessions.extend(dom_data)
+                    dom_data = self.extract_session_data_from_dom(url)
+                    if dom_data:
+                        logger.info("Found session data in DOM")
+                        sessions.extend(dom_data)
                     
                 except Exception as e:
                     logger.error(f"Error processing session URL: {e}")
@@ -367,31 +367,59 @@ class DaisScraper:
                 except json.JSONDecodeError:
                     continue
             
+            # Try to find any script tag containing session data
+            script_elements = self.driver.find_elements(By.TAG_NAME, 'script')
+            for element in script_elements:
+                try:
+                    script_content = element.get_attribute('innerHTML')
+                    if 'session' in script_content.lower() or 'agenda' in script_content.lower():
+                        # Try to extract JSON data from the script
+                        json_match = re.search(r'({.*})', script_content)
+                        if json_match:
+                            data = json.loads(json_match.group(1))
+                            if 'session' in data or 'agenda' in data:
+                                logger.debug("Found session data in script tag")
+                                return data
+                except Exception as e:
+                    logger.debug(f"Error parsing script content: {e}")
+                    continue
+            
             return None
         except Exception as e:
             logger.error(f"Error extracting Next.js data with Selenium: {e}")
             return None
 
-    def extract_session_data_from_dom(self) -> List[Dict]:
+    def extract_session_data_from_dom(self, session_url: str = "") -> List[Dict]:
         """Extract session data directly from the DOM structure."""
         try:
             sessions = []
             
-            # Wait for session details to load
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, '[class*="session-details"], [class*="agenda-details"]'))
-            )
+            # Wait for any content to load
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+            except Exception as e:
+                logger.warning(f"Timeout waiting for page to load: {e}")
+                return []
             
-            # Look for session details container
+            # Look for session details container with more flexible selectors
             session_elements = self.driver.find_elements(
                 By.CSS_SELECTOR, 
-                '[class*="session-details"], [class*="agenda-details"], [class*="event-details"]'
+                'div[class*="session"], div[class*="agenda"], div[class*="event"], article, main'
             )
+            
+            if not session_elements:
+                logger.warning("No session elements found in DOM")
+                return []
             
             for element in session_elements:
                 try:
+                    # Use URL path segment as session ID if available, otherwise generate UUID
+                    session_id = session_url.split("/")[-1] if session_url else str(uuid.uuid4())
+                    
                     session_data = {
-                        "session_id": str(uuid.uuid4()),
+                        "session_id": session_id,
                         "title": "",
                         "description": "",
                         "track": "",
@@ -411,145 +439,17 @@ class DaisScraper:
                     
                     # Extract title - check multiple possible selectors
                     title_selectors = [
-                        '[class*="title"]', '[class*="heading"]', 'h1', 'h2', 'h3', 'h4',
-                        '[data-type="title"]', '[data-test="session-title"]'
+                        'h1', 'h2', 'h3', 'h4', '[class*="title"]', '[class*="heading"]',
+                        '[data-type="title"]', '[data-test="session-title"]', 'title'
                     ]
                     for selector in title_selectors:
-                        title_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if title_element:
-                            session_data["title"] = title_element[0].text.strip()
-                            break
-                    
-                    # Extract description - check multiple possible selectors
-                    desc_selectors = [
-                        '[class*="description"]', '[class*="abstract"]', '[class*="content"]',
-                        '[data-type="description"]', '[data-test="session-description"]'
-                    ]
-                    for selector in desc_selectors:
-                        desc_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if desc_element:
-                            session_data["description"] = desc_element[0].text.strip()
-                            break
-                    
-                    # Extract track - check multiple possible selectors
-                    track_selectors = [
-                        '[class*="track"]', '[class*="category"]', '[data-type="track"]',
-                        '[class*="stream"]', '[class*="path"]', '.tag', '.pill'
-                    ]
-                    for selector in track_selectors:
-                        track_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if track_element:
-                            track_text = track_element[0].text.strip()
-                            if track_text and not any(x in track_text.lower() for x in ["register", "details", "learn more"]):
-                                session_data["track"] = track_text
+                        try:
+                            title_element = element.find_elements(By.CSS_SELECTOR, selector)
+                            if title_element and title_element[0].text.strip():
+                                session_data["title"] = title_element[0].text.strip()
                                 break
-                    
-                    # Extract level - check multiple possible selectors
-                    level_selectors = [
-                        '[class*="level"]', '[class*="difficulty"]', '[class*="experience"]',
-                        '[data-type="level"]', '[data-test="session-level"]'
-                    ]
-                    for selector in level_selectors:
-                        level_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if level_element:
-                            level_text = level_element[0].text.strip()
-                            if level_text and not any(x in level_text.lower() for x in ["register", "details", "learn more"]):
-                                session_data["level"] = level_text
-                                break
-                    
-                    # Extract type - check multiple possible selectors
-                    type_selectors = [
-                        '[class*="type"]', '[class*="format"]', '[class*="session-type"]',
-                        '[data-type="session-type"]', '[data-test="session-format"]'
-                    ]
-                    for selector in type_selectors:
-                        type_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if type_element:
-                            type_text = type_element[0].text.strip()
-                            if type_text and not any(x in type_text.lower() for x in ["register", "details", "learn more"]):
-                                session_data["type"] = type_text
-                                break
-                    
-                    # Extract speakers - check multiple possible selectors
-                    speaker_selectors = [
-                        '[class*="speaker"]', '[class*="presenter"]', '[data-type="speaker"]',
-                        '[class*="author"]', '.byline'
-                    ]
-                    for selector in speaker_selectors:
-                        speaker_elements = element.find_elements(By.CSS_SELECTOR, selector)
-                        if speaker_elements:
-                            speakers = []
-                            for speaker_el in speaker_elements:
-                                speaker_text = speaker_el.text.strip()
-                                # Clean up speaker text
-                                speaker_text = re.sub(r'\s*/\s*', '', speaker_text)  # Remove separators
-                                speaker_text = re.sub(r'\s*,\s*', '', speaker_text)  # Remove commas
-                                if speaker_text and not any(x in speaker_text.lower() for x in ["databricks", "inc", "llc", "ltd"]):
-                                    speakers.append(speaker_text)
-                            if speakers:
-                                session_data["speakers"] = speakers
-                                break
-                    
-                    # Extract schedule - check multiple possible selectors
-                    time_selectors = [
-                        '[class*="time"]', '[class*="schedule"]', '[data-type="time"]',
-                        '[class*="when"]', '.datetime'
-                    ]
-                    for selector in time_selectors:
-                        time_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if time_element:
-                            time_text = time_element[0].text.strip()
-                            # Try to parse time text into start and end times
-                            time_match = re.search(r'(\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?)\s*[-–]\s*(\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?)', time_text)
-                            if time_match:
-                                session_data["schedule"]["start_time"] = time_match.group(1)
-                                session_data["schedule"]["end_time"] = time_match.group(2)
-                            # Try to find day information
-                            day_match = re.search(r'(Mon|Tue|Wed|Thu|Monday|Tuesday|Wednesday|Thursday)', time_text, re.IGNORECASE)
-                            if day_match:
-                                session_data["schedule"]["day"] = day_match.group(1)
-                            break
-                    
-                    # Extract room - check multiple possible selectors
-                    room_selectors = [
-                        '[class*="room"]', '[class*="location"]', '[data-type="room"]',
-                        '[class*="venue"]', '.location'
-                    ]
-                    for selector in room_selectors:
-                        room_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if room_element:
-                            session_data["schedule"]["room"] = room_element[0].text.strip()
-                            break
-                    
-                    # Extract areas of interest - check multiple possible selectors
-                    areas_selectors = [
-                        '[class*="topics"]', '[class*="tags"]', '[class*="areas"]',
-                        '[data-type="topics"]', '[data-test="session-topics"]'
-                    ]
-                    for selector in areas_selectors:
-                        areas_elements = element.find_elements(By.CSS_SELECTOR, selector)
-                        if areas_elements:
-                            areas = []
-                            for area_el in areas_elements:
-                                area_text = area_el.text.strip()
-                                if area_text and not any(x in area_text.lower() for x in ["register", "details", "learn more"]):
-                                    areas.extend([a.strip() for a in area_text.split(',')])
-                            if areas:
-                                session_data["areas_of_interest"] = areas
-                                break
-                    
-                    # Extract industry - check multiple possible selectors
-                    industry_selectors = [
-                        '[class*="industry"]', '[class*="vertical"]', '[class*="sector"]',
-                        '[data-type="industry"]', '[data-test="session-industry"]'
-                    ]
-                    for selector in industry_selectors:
-                        industry_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if industry_element:
-                            industry_text = industry_element[0].text.strip()
-                            if industry_text and not any(x in industry_text.lower() for x in ["register", "details", "learn more"]):
-                                session_data["industry"] = industry_text
-                                break
+                        except Exception as e:
+                            logger.debug(f"Error extracting title with selector {selector}: {e}")
                     
                     # Only add sessions that have at least a title
                     if session_data["title"]:
@@ -565,13 +465,15 @@ class DaisScraper:
 
 def main():
     """Main entry point for the scraper."""
+    import argparse
+    
     parser = argparse.ArgumentParser(description="Scrape Databricks Data + AI Summit session data")
     parser.add_argument("--preview", action="store_true", help="Run in preview mode (process only 3 sessions)")
     parser.add_argument("--preview-count", type=int, default=3, help="Number of sessions to process in preview mode")
     args = parser.parse_args()
     
     logging.basicConfig(level=logging.INFO)
-    scraper = DaisScraper(preview_mode=args.preview, preview_count=args.preview_count)
+    scraper = DaisScraperV2(preview_mode=args.preview, preview_count=args.preview_count)
     sessions = scraper.fetch_sessions()
     if sessions:
         scraper.save_sessions(sessions)
