@@ -2,7 +2,7 @@ import json
 import logging
 import requests
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 import re
 import time
@@ -15,7 +15,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import uuid
 import ast
-import argparse
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +224,9 @@ class DaisScraper:
     def save_sessions(self, sessions: List[Dict]):
         """Save session data to JSONL files."""
         try:
+            # Sort sessions by session_id
+            sessions = sorted(sessions, key=lambda x: x["session_id"])
+            
             # Save all sessions
             all_sessions_file = self.sessions_dir / "sessions_.jsonl"
             with open(all_sessions_file, "w") as f:
@@ -241,6 +243,8 @@ class DaisScraper:
                 tracks[track].append(session)
             
             for track, track_sessions in tracks.items():
+                # Sort track sessions by session_id
+                track_sessions = sorted(track_sessions, key=lambda x: x["session_id"])
                 track_file = self.sessions_dir / f"sessions_{track.lower().replace(' ', '_')}.jsonl"
                 with open(track_file, "w") as f:
                     for session in track_sessions:
@@ -300,7 +304,7 @@ class DaisScraper:
                     time.sleep(2)  # Wait for page to load
                     
                     # Try to find Next.js data structure first
-                    nextjs_data = self.extract_nextjs_data_selenium()
+                    nextjs_data = self.extract_nextjs_data()
                     if nextjs_data:
                         logger.info("Found Next.js data structure")
                         if "props" in nextjs_data and "pageProps" in nextjs_data["props"]:
@@ -308,14 +312,15 @@ class DaisScraper:
                             if "agenda" in page_props:
                                 logger.info("Found agenda data in pageProps")
                                 new_sessions = self.extract_session_data(page_props["agenda"], url)
-                                sessions.extend(new_sessions)
+                                if new_sessions:
+                                    sessions.extend(new_sessions)
+                                    continue
                     
                     # If no sessions found in Next.js data, try DOM extraction
-                    if not sessions:
-                        dom_data = self.extract_session_data_from_dom()
-                        if dom_data:
-                            logger.info("Found session data in DOM")
-                            sessions.extend(dom_data)
+                    dom_data = self.extract_session_data_from_dom(url)
+                    if dom_data:
+                        logger.info("Found session data in DOM")
+                        sessions.extend(dom_data)
                     
                 except Exception as e:
                     logger.error(f"Error processing session URL: {e}")
@@ -341,57 +346,479 @@ class DaisScraper:
                 self.driver.quit()
                 self.driver = None
 
-    def extract_nextjs_data_selenium(self) -> Optional[Dict]:
-        """Extract Next.js data structure using Selenium."""
+    def extract_nextjs_data(self) -> Optional[Dict]:
+        """Extract session data from Next.js data structure."""
         try:
-            # Execute JavaScript to get Next.js data
+            # First try to get data from window.__NEXT_DATA__
             script = """
             try {
-                return window.__NEXT_DATA__;
+                const data = window.__NEXT_DATA__;
+                if (data) {
+                    return JSON.stringify(data);
+                }
+                
+                // Look for session data in other global variables
+                const globals = Object.keys(window).filter(key => 
+                    key.toLowerCase().includes('session') || 
+                    key.toLowerCase().includes('event') || 
+                    key.toLowerCase().includes('agenda')
+                );
+                
+                for (const key of globals) {
+                    const value = window[key];
+                    if (value && typeof value === 'object') {
+                        return JSON.stringify(value);
+                    }
+                }
+                
+                return null;
             } catch (e) {
                 return null;
             }
             """
-            nextjs_data = self.driver.execute_script(script)
-            if nextjs_data:
-                logger.debug("Found Next.js data through JavaScript")
-                return nextjs_data
-            
-            # Look for __NEXT_DATA__ script tag
-            next_data_elements = self.driver.find_elements(By.CSS_SELECTOR, 'script#__NEXT_DATA__')
-            for element in next_data_elements:
+            result = self.driver.execute_script(script)
+            if result:
                 try:
-                    data = json.loads(element.get_attribute('innerHTML'))
-                    logger.debug("Found Next.js data in script tag")
-                    return data
+                    data = json.loads(result)
+                    logger.info("Found data in JavaScript variables")
+                    
+                    # Try to find session data in the structure
+                    if isinstance(data, dict):
+                        # Look for metadata in common locations
+                        metadata = {}
+                        schedule = {}
+                        areas = []
+                        
+                        def search_dict(d: Dict, prefix: str = "") -> None:
+                            """Recursively search dictionary for metadata."""
+                            if not isinstance(d, dict):
+                                return
+                            
+                            # Look for metadata fields
+                            for field in ["track", "level", "type", "industry", "category"]:
+                                if field in d and isinstance(d[field], str):
+                                    metadata[field] = d[field]
+                                elif f"{field}Name" in d and isinstance(d[f"{field}Name"], str):
+                                    metadata[field] = d[f"{field}Name"]
+                                elif f"{field}Type" in d and isinstance(d[f"{field}Type"], str):
+                                    metadata[field] = d[f"{field}Type"]
+                            
+                            # Look for schedule information
+                            if "schedule" in d and isinstance(d["schedule"], dict):
+                                schedule.update(d["schedule"])
+                            elif "datetime" in d and isinstance(d["datetime"], str):
+                                schedule["datetime"] = d["datetime"]
+                            elif all(key in d for key in ["startTime", "endTime"]):
+                                schedule["start_time"] = d["startTime"]
+                                schedule["end_time"] = d["endTime"]
+                            elif "time" in d and isinstance(d["time"], str):
+                                schedule["time"] = d["time"]
+                            
+                            # Look for areas of interest
+                            if "areas" in d and isinstance(d["areas"], (list, str)):
+                                if isinstance(d["areas"], list):
+                                    areas.extend(d["areas"])
+                                else:
+                                    areas.extend(d["areas"].split(","))
+                            elif "topics" in d and isinstance(d["topics"], (list, str)):
+                                if isinstance(d["topics"], list):
+                                    areas.extend(d["topics"])
+                                else:
+                                    areas.extend(d["topics"].split(","))
+                            elif "tags" in d and isinstance(d["tags"], (list, str)):
+                                if isinstance(d["tags"], list):
+                                    areas.extend(d["tags"])
+                                else:
+                                    areas.extend(d["tags"].split(","))
+                            
+                            # Recursively search nested dictionaries
+                            for key, value in d.items():
+                                if isinstance(value, dict):
+                                    search_dict(value, f"{prefix}.{key}" if prefix else key)
+                                elif isinstance(value, list):
+                                    for item in value:
+                                        if isinstance(item, dict):
+                                            search_dict(item, f"{prefix}.{key}[]" if prefix else key)
+                        
+                        # Start recursive search
+                        search_dict(data)
+                        
+                        # Clean up and return found data
+                        if metadata or schedule or areas:
+                            result = {}
+                            if metadata:
+                                result["metadata"] = metadata
+                            if schedule:
+                                # Parse schedule information if needed
+                                if "datetime" in schedule:
+                                    # Try to parse datetime string
+                                    try:
+                                        dt = datetime.strptime(schedule["datetime"], "%Y-%m-%dT%H:%M:%S")
+                                        schedule["day"] = dt.strftime("%A")
+                                        schedule["start_time"] = dt.strftime("%I:%M %p")
+                                    except ValueError:
+                                        pass
+                                elif "time" in schedule:
+                                    # Try to parse time string
+                                    time_patterns = [
+                                        r'(\d{1,2}:\d{2}\s*[AP]M)\s*[-–]\s*(\d{1,2}:\d{2}\s*[AP]M)',
+                                        r'(\d{1,2}(?::\d{2})?\s*[AP]M)\s*[-–]\s*(\d{1,2}(?::\d{2})?\s*[AP]M)'
+                                    ]
+                                    for pattern in time_patterns:
+                                        match = re.search(pattern, schedule["time"])
+                                        if match:
+                                            schedule["start_time"] = match.group(1)
+                                            schedule["end_time"] = match.group(2)
+                                            break
+                                result["schedule"] = schedule
+                            if areas:
+                                result["areas_of_interest"] = list(set(area.strip() for area in areas if area.strip()))
+                            return result
                 except json.JSONDecodeError:
-                    continue
+                    pass
+            
+            # If no data found in JavaScript variables, try looking in script tags
+            script_elements = self.driver.find_elements(By.TAG_NAME, "script")
+            for script in script_elements:
+                try:
+                    script_text = script.get_attribute("textContent")
+                    if script_text and "__NEXT_DATA__" in script_text:
+                        # Parse JSON data
+                        json_text = script_text.strip()
+                        data = json.loads(json_text)
+                        
+                        # Try to find session data in the Next.js structure
+                        if "props" in data:
+                            props = data["props"]
+                            # Look in common locations for session data
+                            locations = [
+                                props.get("pageProps", {}),
+                                props.get("initialState", {}),
+                                props.get("initialProps", {}),
+                                props.get("session", {}),
+                                props.get("data", {})
+                            ]
+                            
+                            # Search for session data in each location
+                            for location in locations:
+                                if isinstance(location, dict):
+                                    # Look for session metadata
+                                    metadata = {}
+                                    for field in ["track", "level", "type", "industry", "category"]:
+                                        # Try different paths where metadata might be stored
+                                        paths = [
+                                            field,
+                                            f"session_{field}",
+                                            f"event_{field}",
+                                            f"metadata.{field}",
+                                            f"session.{field}",
+                                            f"event.{field}"
+                                        ]
+                                        for path in paths:
+                                            value = self._get_nested_value(location, path)
+                                            if value and isinstance(value, str):
+                                                metadata[field] = value
+                                                break
+                                    
+                                    # Look for schedule information
+                                    schedule = {}
+                                    schedule_paths = [
+                                        "schedule",
+                                        "session_schedule",
+                                        "event_schedule",
+                                        "datetime",
+                                        "time",
+                                        "session.schedule",
+                                        "event.schedule"
+                                    ]
+                                    for path in schedule_paths:
+                                        schedule_data = self._get_nested_value(location, path)
+                                        if schedule_data:
+                                            if isinstance(schedule_data, dict):
+                                                schedule.update(schedule_data)
+                                            elif isinstance(schedule_data, str):
+                                                # Try to parse schedule string
+                                                # Look for day
+                                                day_patterns = [
+                                                    r'(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)',
+                                                    r'\d{1,2}/\d{1,2}(?:/\d{2,4})?',
+                                                    r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}(?:st|nd|rd|th)?(?:,? \d{4})?'
+                                                ]
+                                                for pattern in day_patterns:
+                                                    match = re.search(pattern, schedule_data, re.IGNORECASE)
+                                                    if match:
+                                                        schedule["day"] = match.group(0)
+                                                        break
+                                                
+                                                # Look for time
+                                                time_patterns = [
+                                                    r'(\d{1,2}:\d{2}\s*[AP]M)\s*[-–]\s*(\d{1,2}:\d{2}\s*[AP]M)',
+                                                    r'(\d{1,2}(?::\d{2})?\s*[AP]M)\s*[-–]\s*(\d{1,2}(?::\d{2})?\s*[AP]M)'
+                                                ]
+                                                for pattern in time_patterns:
+                                                    match = re.search(pattern, schedule_data)
+                                                    if match:
+                                                        schedule["start_time"] = match.group(1)
+                                                        schedule["end_time"] = match.group(2)
+                                                        break
+                                    
+                                    # Look for areas of interest
+                                    areas = []
+                                    areas_paths = [
+                                        "areas_of_interest",
+                                        "topics",
+                                        "tags",
+                                        "session.areas_of_interest",
+                                        "event.areas_of_interest",
+                                        "metadata.areas_of_interest"
+                                    ]
+                                    for path in areas_paths:
+                                        areas_data = self._get_nested_value(location, path)
+                                        if areas_data:
+                                            if isinstance(areas_data, list):
+                                                areas.extend(areas_data)
+                                            elif isinstance(areas_data, str):
+                                                areas.extend([area.strip() for area in areas_data.split(",")])
+                                    
+                                    # If we found any metadata, return it
+                                    if metadata or schedule or areas:
+                                        return {
+                                            "metadata": metadata,
+                                            "schedule": schedule,
+                                            "areas_of_interest": list(set(areas))  # Remove duplicates
+                                        }
+                except Exception as e:
+                    logger.debug(f"Error parsing script element: {e}")
             
             return None
         except Exception as e:
-            logger.error(f"Error extracting Next.js data with Selenium: {e}")
+            logger.error(f"Error extracting Next.js data: {e}")
+            return None
+    
+    def _get_nested_value(self, obj: Dict, path: str) -> Any:
+        """Get a value from a nested dictionary using a dot-separated path."""
+        try:
+            current = obj
+            for key in path.split('.'):
+                if isinstance(current, dict):
+                    current = current.get(key, {})
+                else:
+                    return None
+            return current if current != {} else None
+        except Exception:
             return None
 
-    def extract_session_data_from_dom(self) -> List[Dict]:
+    def clean_text(self, text: str) -> str:
+        """Clean up text by removing redundant whitespace and unwanted content."""
+        # Remove "RETURN TO ALL SESSIONS" and similar navigation text
+        text = re.sub(r'RETURN TO ALL SESSIONS.*$', '', text, flags=re.MULTILINE)
+        # Remove "IMAGE COMING SOON" placeholders
+        text = re.sub(r'IMAGE COMING SOON\n?', '', text)
+        # Remove speaker information (lines containing names and titles)
+        text = re.sub(r'\n[^/\n]+(?:\n/[^\n]+\n[^\n]+)*(?:\n|$)', '\n', text)
+        # Remove redundant newlines and whitespace
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r' +', ' ', text)
+        # Remove leading/trailing whitespace
+        text = text.strip()
+        return text
+
+    def extract_speakers_from_text(self, text: str) -> List[str]:
+        """Extract speaker names and titles from text."""
+        speakers = []
+        seen_names = set()  # Track unique names to avoid duplicates
+        
+        # Look for patterns like "Name\n/Title\nCompany" or "Name\n/Title"
+        speaker_pattern = r'([^\n/]+)\n/([^\n]+)(?:\n([^\n/]+))?'
+        matches = re.finditer(speaker_pattern, text)
+        
+        for match in matches:
+            name = match.group(1).strip()
+            title = match.group(2).strip()
+            company = match.group(3).strip() if match.group(3) else ""
+            
+            # Skip if name is a placeholder or navigation text
+            if (name.startswith('IMAGE COMING SOON') or 
+                name.startswith('RETURN TO ALL SESSIONS') or
+                not name):
+                continue
+            
+            # Clean up name by removing duplicates within it
+            name_parts = name.split()
+            clean_name = ' '.join(dict.fromkeys(name_parts))
+            
+            # Clean up company name by removing duplicates
+            if company:
+                company_parts = company.split()
+                clean_company = ' '.join(dict.fromkeys(company_parts))
+            else:
+                # Try to extract company from title if not provided separately
+                company_match = re.search(r',\s*([^,]+)$', title)
+                if company_match:
+                    clean_company = company_match.group(1).strip()
+                    title = title[:company_match.start()].strip()
+                else:
+                    clean_company = ""
+            
+            # Create unique speaker identifier
+            speaker_key = f"{clean_name}:{clean_company}"
+            
+            # Only add if we haven't seen this speaker before
+            if speaker_key not in seen_names:
+                seen_names.add(speaker_key)
+                if clean_company:
+                    speakers.append(f"{clean_name} ({title}, {clean_company})")
+                else:
+                    speakers.append(f"{clean_name} ({title})")
+        
+        return speakers
+
+    def extract_metadata_from_dom(self, element: webdriver.remote.webelement.WebElement, selector_prefix: str, field_name: str) -> str:
+        """Extract metadata from DOM using various selectors."""
+        selectors = [
+            # Direct class matches
+            f'{selector_prefix}[class*="{field_name}"]',
+            f'{selector_prefix}[data-test*="{field_name}"]',
+            f'{selector_prefix}[data-type*="{field_name}"]',
+            
+            # Label + value patterns
+            f'[class*="{field_name}-label"] + {selector_prefix}',
+            f'[data-test*="{field_name}-label"] + {selector_prefix}',
+            f'[data-type*="{field_name}-label"] + {selector_prefix}',
+            
+            # Common metadata patterns
+            f'dt[class*="{field_name}"] + dd',
+            f'th[class*="{field_name}"] + td',
+            f'div[class*="metadata"] {selector_prefix}[class*="{field_name}"]',
+            f'div[class*="details"] {selector_prefix}[class*="{field_name}"]',
+            f'div[class*="info"] {selector_prefix}[class*="{field_name}"]',
+            
+            # Attribute-based selectors
+            f'{selector_prefix}[aria-label*="{field_name}"]',
+            f'{selector_prefix}[title*="{field_name}"]',
+            f'{selector_prefix}[name*="{field_name}"]',
+            
+            # Common class patterns
+            f'.session-{field_name}',
+            f'.event-{field_name}',
+            f'.{field_name}-value',
+            f'.{field_name}-text'
+        ]
+        
+        # Add variations with capitalized field name
+        field_name_cap = field_name.capitalize()
+        selectors.extend([
+            f'{selector_prefix}[class*="{field_name_cap}"]',
+            f'{selector_prefix}[data-test*="{field_name_cap}"]',
+            f'{selector_prefix}[data-type*="{field_name_cap}"]',
+            f'.session{field_name_cap}',
+            f'.event{field_name_cap}'
+        ])
+        
+        # Try each selector
+        for selector in selectors:
+            try:
+                elements = element.find_elements(By.CSS_SELECTOR, selector)
+                for el in elements:
+                    text = el.text.strip()
+                    if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
+                        # Clean up text by removing any label prefixes
+                        text = re.sub(r'^(Track|Level|Type|Industry|Category):\s*', '', text, flags=re.IGNORECASE)
+                        # Clean up text by removing any Drupal-specific content types
+                        text = re.sub(r'menu_link_content--.*$', '', text).strip()
+                        if text:
+                            return text
+            except Exception as e:
+                logger.debug(f"Error extracting {field_name} with selector {selector}: {e}")
+        
+        # Try looking for text that matches common patterns for this field
+        try:
+            # Get all text content
+            text_content = element.text
+            
+            # Define patterns for each field type
+            patterns = {
+                'track': [
+                    r'Track:\s*([^\n]+)',
+                    r'Session Track:\s*([^\n]+)',
+                    r'Event Track:\s*([^\n]+)'
+                ],
+                'level': [
+                    r'Level:\s*([^\n]+)',
+                    r'Difficulty:\s*([^\n]+)',
+                    r'Experience Level:\s*([^\n]+)',
+                    r'(?:Beginner|Intermediate|Advanced|Expert)'
+                ],
+                'type': [
+                    r'Type:\s*([^\n]+)',
+                    r'Session Type:\s*([^\n]+)',
+                    r'Format:\s*([^\n]+)',
+                    r'(?:Keynote|Workshop|Breakout|Panel|Tutorial)'
+                ],
+                'industry': [
+                    r'Industry:\s*([^\n]+)',
+                    r'Sector:\s*([^\n]+)',
+                    r'Vertical:\s*([^\n]+)'
+                ],
+                'category': [
+                    r'Category:\s*([^\n]+)',
+                    r'Topic:\s*([^\n]+)',
+                    r'Theme:\s*([^\n]+)'
+                ]
+            }
+            
+            # Try each pattern for the current field
+            if field_name in patterns:
+                for pattern in patterns[field_name]:
+                    match = re.search(pattern, text_content, re.IGNORECASE)
+                    if match:
+                        text = match.group(1) if len(match.groups()) > 0 else match.group(0)
+                        text = text.strip()
+                        if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
+                            return text
+        except Exception as e:
+            logger.debug(f"Error extracting {field_name} from text content: {e}")
+        
+        return ""
+
+    def extract_session_data_from_dom(self, session_url: str = "") -> List[Dict]:
         """Extract session data directly from the DOM structure."""
         try:
             sessions = []
             
-            # Wait for session details to load
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, '[class*="session-details"], [class*="agenda-details"]'))
-            )
+            # Wait for any content to load
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                # Wait a bit longer for dynamic content
+                time.sleep(2)
+            except Exception as e:
+                logger.warning(f"Timeout waiting for page to load: {e}")
+                return []
             
-            # Look for session details container
+            # Try to find Next.js data structure first
+            nextjs_data = self.extract_nextjs_data()
+            if nextjs_data:
+                logger.info("Found Next.js data structure")
+            
+            # Look for session details container with more flexible selectors
             session_elements = self.driver.find_elements(
                 By.CSS_SELECTOR, 
-                '[class*="session-details"], [class*="agenda-details"], [class*="event-details"]'
+                'div[class*="session"], div[class*="agenda"], div[class*="event"], article, main'
             )
+            
+            if not session_elements:
+                logger.warning("No session elements found in DOM")
+                return []
             
             for element in session_elements:
                 try:
+                    # Use URL path segment as session ID if available, otherwise generate UUID
+                    session_id = session_url.split("/")[-1] if session_url else str(uuid.uuid4())
+                    
                     session_data = {
-                        "session_id": str(uuid.uuid4()),
+                        "session_id": session_id,
                         "title": "",
                         "description": "",
                         "track": "",
@@ -411,145 +838,140 @@ class DaisScraper:
                     
                     # Extract title - check multiple possible selectors
                     title_selectors = [
-                        '[class*="title"]', '[class*="heading"]', 'h1', 'h2', 'h3', 'h4',
-                        '[data-type="title"]', '[data-test="session-title"]'
+                        'h1', 'h2', 'h3', 'h4', '[class*="title"]', '[class*="heading"]',
+                        '[data-type="title"]', '[data-test="session-title"]', 'title'
                     ]
                     for selector in title_selectors:
-                        title_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if title_element:
-                            session_data["title"] = title_element[0].text.strip()
-                            break
-                    
-                    # Extract description - check multiple possible selectors
-                    desc_selectors = [
-                        '[class*="description"]', '[class*="abstract"]', '[class*="content"]',
-                        '[data-type="description"]', '[data-test="session-description"]'
-                    ]
-                    for selector in desc_selectors:
-                        desc_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if desc_element:
-                            session_data["description"] = desc_element[0].text.strip()
-                            break
-                    
-                    # Extract track - check multiple possible selectors
-                    track_selectors = [
-                        '[class*="track"]', '[class*="category"]', '[data-type="track"]',
-                        '[class*="stream"]', '[class*="path"]', '.tag', '.pill'
-                    ]
-                    for selector in track_selectors:
-                        track_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if track_element:
-                            track_text = track_element[0].text.strip()
-                            if track_text and not any(x in track_text.lower() for x in ["register", "details", "learn more"]):
-                                session_data["track"] = track_text
+                        try:
+                            title_element = element.find_elements(By.CSS_SELECTOR, selector)
+                            if title_element and title_element[0].text.strip():
+                                session_data["title"] = title_element[0].text.strip()
                                 break
+                        except Exception as e:
+                            logger.debug(f"Error extracting title with selector {selector}: {e}")
                     
-                    # Extract level - check multiple possible selectors
-                    level_selectors = [
-                        '[class*="level"]', '[class*="difficulty"]', '[class*="experience"]',
-                        '[data-type="level"]', '[data-test="session-level"]'
+                    # Extract description - look for content sections
+                    description_selectors = [
+                        'div[class*="content"]', 'div[class*="description"]', 'div[class*="abstract"]',
+                        'div[class*="summary"]', 'div[class*="text"]', 'p'
                     ]
-                    for selector in level_selectors:
-                        level_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if level_element:
-                            level_text = level_element[0].text.strip()
-                            if level_text and not any(x in level_text.lower() for x in ["register", "details", "learn more"]):
-                                session_data["level"] = level_text
-                                break
+                    for selector in description_selectors:
+                        try:
+                            desc_elements = element.find_elements(By.CSS_SELECTOR, selector)
+                            if desc_elements:
+                                # Get the full text including speaker information
+                                full_text = " ".join(e.text.strip() for e in desc_elements if e.text.strip())
+                                if full_text:
+                                    # Extract speakers from the text
+                                    session_data["speakers"] = self.extract_speakers_from_text(full_text)
+                                    # Clean up the description text
+                                    session_data["description"] = self.clean_text(full_text)
+                                    break
+                        except Exception as e:
+                            logger.debug(f"Error extracting description with selector {selector}: {e}")
                     
-                    # Extract type - check multiple possible selectors
-                    type_selectors = [
-                        '[class*="type"]', '[class*="format"]', '[class*="session-type"]',
-                        '[data-type="session-type"]', '[data-test="session-format"]'
-                    ]
-                    for selector in type_selectors:
-                        type_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if type_element:
-                            type_text = type_element[0].text.strip()
-                            if type_text and not any(x in type_text.lower() for x in ["register", "details", "learn more"]):
-                                session_data["type"] = type_text
-                                break
+                    # Extract metadata fields using common selectors
+                    for field in ['track', 'level', 'type', 'industry', 'category']:
+                        # First try to get from Next.js data
+                        if nextjs_data and "metadata" in nextjs_data:
+                            value = nextjs_data["metadata"].get(field, "")
+                            if value:
+                                session_data[field] = value
+                                continue
+                        
+                        # If not found in Next.js data, try DOM selectors
+                        value = self.extract_metadata_from_dom(element, 'div', field)
+                        if not value:
+                            value = self.extract_metadata_from_dom(element, 'span', field)
+                        session_data[field] = value
                     
-                    # Extract speakers - check multiple possible selectors
-                    speaker_selectors = [
-                        '[class*="speaker"]', '[class*="presenter"]', '[data-type="speaker"]',
-                        '[class*="author"]', '.byline'
-                    ]
-                    for selector in speaker_selectors:
-                        speaker_elements = element.find_elements(By.CSS_SELECTOR, selector)
-                        if speaker_elements:
-                            speakers = []
-                            for speaker_el in speaker_elements:
-                                speaker_text = speaker_el.text.strip()
-                                # Clean up speaker text
-                                speaker_text = re.sub(r'\s*/\s*', '', speaker_text)  # Remove separators
-                                speaker_text = re.sub(r'\s*,\s*', '', speaker_text)  # Remove commas
-                                if speaker_text and not any(x in speaker_text.lower() for x in ["databricks", "inc", "llc", "ltd"]):
-                                    speakers.append(speaker_text)
-                            if speakers:
-                                session_data["speakers"] = speakers
-                                break
+                    # Extract areas of interest
+                    # First try to get from Next.js data
+                    if nextjs_data and "areas_of_interest" in nextjs_data:
+                        areas = nextjs_data["areas_of_interest"]
+                        if areas:
+                            session_data["areas_of_interest"] = areas
+                    else:
+                        # If not found in Next.js data, try DOM selectors
+                        areas_selectors = [
+                            'div[class*="areas"]', 'div[class*="topics"]', 'div[class*="tags"]',
+                            'span[class*="areas"]', 'span[class*="topics"]', 'span[class*="tags"]',
+                            '[data-type="areas"]', '[data-test="session-areas"]',
+                            'ul[class*="tags"] li', 'div[class*="tag-list"] span'
+                        ]
+                        for selector in areas_selectors:
+                            try:
+                                areas_elements = element.find_elements(By.CSS_SELECTOR, selector)
+                                if areas_elements:
+                                    areas = []
+                                    for area_element in areas_elements:
+                                        text = area_element.text.strip()
+                                        if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
+                                            areas.extend(text.split(','))
+                                    if areas:
+                                        session_data["areas_of_interest"] = [area.strip() for area in areas if area.strip()]
+                                        break
+                            except Exception as e:
+                                logger.debug(f"Error extracting areas with selector {selector}: {e}")
                     
-                    # Extract schedule - check multiple possible selectors
-                    time_selectors = [
-                        '[class*="time"]', '[class*="schedule"]', '[data-type="time"]',
-                        '[class*="when"]', '.datetime'
-                    ]
-                    for selector in time_selectors:
-                        time_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if time_element:
-                            time_text = time_element[0].text.strip()
-                            # Try to parse time text into start and end times
-                            time_match = re.search(r'(\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?)\s*[-–]\s*(\d{1,2}:\d{2}(?:\s*[AaPp][Mm])?)', time_text)
-                            if time_match:
-                                session_data["schedule"]["start_time"] = time_match.group(1)
-                                session_data["schedule"]["end_time"] = time_match.group(2)
-                            # Try to find day information
-                            day_match = re.search(r'(Mon|Tue|Wed|Thu|Monday|Tuesday|Wednesday|Thursday)', time_text, re.IGNORECASE)
-                            if day_match:
-                                session_data["schedule"]["day"] = day_match.group(1)
-                            break
-                    
-                    # Extract room - check multiple possible selectors
-                    room_selectors = [
-                        '[class*="room"]', '[class*="location"]', '[data-type="room"]',
-                        '[class*="venue"]', '.location'
-                    ]
-                    for selector in room_selectors:
-                        room_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if room_element:
-                            session_data["schedule"]["room"] = room_element[0].text.strip()
-                            break
-                    
-                    # Extract areas of interest - check multiple possible selectors
-                    areas_selectors = [
-                        '[class*="topics"]', '[class*="tags"]', '[class*="areas"]',
-                        '[data-type="topics"]', '[data-test="session-topics"]'
-                    ]
-                    for selector in areas_selectors:
-                        areas_elements = element.find_elements(By.CSS_SELECTOR, selector)
-                        if areas_elements:
-                            areas = []
-                            for area_el in areas_elements:
-                                area_text = area_el.text.strip()
-                                if area_text and not any(x in area_text.lower() for x in ["register", "details", "learn more"]):
-                                    areas.extend([a.strip() for a in area_text.split(',')])
-                            if areas:
-                                session_data["areas_of_interest"] = areas
-                                break
-                    
-                    # Extract industry - check multiple possible selectors
-                    industry_selectors = [
-                        '[class*="industry"]', '[class*="vertical"]', '[class*="sector"]',
-                        '[data-type="industry"]', '[data-test="session-industry"]'
-                    ]
-                    for selector in industry_selectors:
-                        industry_element = element.find_elements(By.CSS_SELECTOR, selector)
-                        if industry_element:
-                            industry_text = industry_element[0].text.strip()
-                            if industry_text and not any(x in industry_text.lower() for x in ["register", "details", "learn more"]):
-                                session_data["industry"] = industry_text
-                                break
+                    # Extract schedule information
+                    # First try to get from Next.js data
+                    if nextjs_data and "schedule" in nextjs_data:
+                        schedule = nextjs_data["schedule"]
+                        if schedule:
+                            session_data["schedule"].update(schedule)
+                    else:
+                        # If not found in Next.js data, try DOM selectors
+                        schedule_selectors = [
+                            'div[class*="schedule"]', 'div[class*="time"]', 'div[class*="date"]',
+                            'span[class*="schedule"]', 'span[class*="time"]', 'span[class*="date"]',
+                            '[data-type="schedule"]', '[data-test="session-schedule"]',
+                            '[class*="datetime"]', '[class*="session-time"]'
+                        ]
+                        for selector in schedule_selectors:
+                            try:
+                                schedule_elements = element.find_elements(By.CSS_SELECTOR, selector)
+                                if schedule_elements:
+                                    schedule_text = schedule_elements[0].text.strip()
+                                    if schedule_text:
+                                        # Look for day
+                                        day_patterns = [
+                                            r'(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)',
+                                            r'\d{1,2}/\d{1,2}(?:/\d{2,4})?',
+                                            r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}(?:st|nd|rd|th)?(?:,? \d{4})?'
+                                        ]
+                                        for pattern in day_patterns:
+                                            match = re.search(pattern, schedule_text, re.IGNORECASE)
+                                            if match:
+                                                session_data["schedule"]["day"] = match.group(0)
+                                                break
+                                        
+                                        # Look for time
+                                        time_patterns = [
+                                            r'(\d{1,2}:\d{2}\s*[AP]M)\s*[-–]\s*(\d{1,2}:\d{2}\s*[AP]M)',
+                                            r'(\d{1,2}(?::\d{2})?\s*[AP]M)\s*[-–]\s*(\d{1,2}(?::\d{2})?\s*[AP]M)'
+                                        ]
+                                        for pattern in time_patterns:
+                                            match = re.search(pattern, schedule_text)
+                                            if match:
+                                                session_data["schedule"]["start_time"] = match.group(1)
+                                                session_data["schedule"]["end_time"] = match.group(2)
+                                                break
+                                        
+                                        # Look for room/location
+                                        room_patterns = [
+                                            r'(?:Room|Location|Venue):\s*([^\n,]+)',
+                                            r'(?:Room|Location|Venue)\s+([A-Z0-9][^\n,]*)',
+                                            r'(?:^|\s)(?:Room|Location|Venue)\s+([^\n,]+)'
+                                        ]
+                                        for pattern in room_patterns:
+                                            match = re.search(pattern, schedule_text, re.IGNORECASE)
+                                            if match:
+                                                session_data["schedule"]["room"] = match.group(1).strip()
+                                                break
+                                    break
+                            except Exception as e:
+                                logger.debug(f"Error extracting schedule with selector {selector}: {e}")
                     
                     # Only add sessions that have at least a title
                     if session_data["title"]:
@@ -565,6 +987,8 @@ class DaisScraper:
 
 def main():
     """Main entry point for the scraper."""
+    import argparse
+    
     parser = argparse.ArgumentParser(description="Scrape Databricks Data + AI Summit session data")
     parser.add_argument("--preview", action="store_true", help="Run in preview mode (process only 3 sessions)")
     parser.add_argument("--preview-count", type=int, default=3, help="Number of sessions to process in preview mode")
