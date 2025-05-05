@@ -52,6 +52,16 @@ To scrape the latest session data from the Databricks website:
 python -m dais_agenda.scraper
 ```
 
+You can also run in preview mode to process only a few sessions (useful for testing):
+```bash
+python -m dais_agenda.scraper --preview
+```
+
+Or specify a custom number of sessions to process in preview mode:
+```bash
+python -m dais_agenda.scraper --preview --preview-count 5
+```
+
 This will:
 - Fetch session data from the Databricks website using Selenium
 - Save all sessions in a single JSONL file at `data/sessions_.jsonl`
