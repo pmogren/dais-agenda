@@ -99,6 +99,33 @@ class DaisScraper:
                     session_type = session_type.get("name", "") or session_type.get("value", "")
                 session_type = str(session_type).strip()
                 
+                # Clean up session type
+                session_type = self.clean_session_type(session_type)
+                
+                # If session type is still empty or contains Drupal content type, try to infer from title or description
+                if not session_type or "menu_link_content" in session_type:
+                    # Look for session type keywords in title and description
+                    text_to_search = f"{title} {description}".lower()
+                    type_keywords = {
+                        'Breakout': ['breakout session', 'breakout'],
+                        'Deep Dive': ['deep dive', 'deep-dive', 'deepdive'],
+                        'Evening Event': ['evening event', 'evening session', 'evening'],
+                        'Keynote': ['keynote session', 'keynote'],
+                        'Lightning Talk': ['lightning talk', 'lightning'],
+                        'Meetup': ['meetup', 'meet-up', 'meet up'],
+                        'Paid Training': ['training session', 'paid training', 'workshop', 'tutorial'],
+                        'Special Interest': ['special interest', 'special-interest']
+                    }
+                    
+                    for standard_type, keywords in type_keywords.items():
+                        if any(keyword in text_to_search for keyword in keywords):
+                            session_type = standard_type
+                            break
+                    
+                    # If still not found, default to "Breakout" as it's the most common type
+                    if not session_type or "menu_link_content" in session_type:
+                        session_type = "Breakout"
+                
                 # Extract level - check multiple possible fields
                 level = (
                     raw_session.get("level", "") or 
@@ -173,14 +200,6 @@ class DaisScraper:
                     industry = industry.get("name", "") or industry.get("value", "")
                 industry = str(industry).strip()
                 
-                # Extract category information (if different from track)
-                category = raw_session.get("category", "") or raw_session.get("sessionCategory", "")
-                if isinstance(category, dict):
-                    category = category.get("name", "") or category.get("value", "")
-                category = str(category).strip()
-                if category == track:  # If category was used as track, clear it
-                    category = ""
-                
                 # Build the final session object
                 session = {
                     "session_id": session_id,
@@ -189,7 +208,6 @@ class DaisScraper:
                     "level": level,
                     "type": session_type,
                     "industry": industry,
-                    "category": category,
                     "areas_of_interest": areas,
                     "speakers": speakers,
                     "schedule": {
@@ -204,28 +222,85 @@ class DaisScraper:
                 # Clean up empty values
                 for key, value in list(session.items()):
                     if isinstance(value, str) and not value:
-                        session[key] = ""
+                        del session[key]
                     elif isinstance(value, list) and not value:
-                        session[key] = []
-                    elif isinstance(value, dict):
-                        for subkey, subvalue in list(value.items()):
-                            if isinstance(subvalue, str) and not subvalue:
-                                value[subkey] = ""
+                        del session[key]
+                    elif isinstance(value, dict) and not any(v for v in value.values()):
+                        del session[key]
                 
-                # Only add sessions that have at least a title
-                if session["title"]:
-                    sessions.append(session)
+                sessions.append(session)
             except Exception as e:
-                logger.error(f"Error processing session data: {e}")
+                logger.error(f"Error processing session: {e}")
                 continue
         
         return sessions
 
+    def clean_session_type(self, session_type: str) -> str:
+        """Clean and normalize session type values."""
+        # Remove any Drupal-specific content types
+        session_type = re.sub(r'menu_link_content--.*$', '', session_type).strip()
+        
+        # If empty after cleaning, return empty string
+        if not session_type:
+            return ""
+            
+        # Define standard session types and their variations
+        standard_types = {
+            'Breakout': ['breakout', 'session', 'regular session'],
+            'Deep Dive': ['deep dive', 'deep-dive', 'deepdive'],
+            'Evening Event': ['evening', 'evening event', 'evening session'],
+            'Keynote': ['keynote', 'plenary'],
+            'Lightning Talk': ['lightning', 'lightning talk', 'quick talk'],
+            'Meetup': ['meetup', 'meet-up', 'meet up'],
+            'Paid Training': ['paid training', 'training', 'workshop', 'tutorial'],
+            'Special Interest': ['special interest', 'special-interest', 'special']
+        }
+        
+        # Try to match the session type to a known type
+        session_type_lower = session_type.lower()
+        for standard_type, variations in standard_types.items():
+            if session_type_lower in variations or any(var in session_type_lower for var in variations):
+                return standard_type
+        
+        # If no match found, return the original type (if not empty)
+        return session_type if session_type else ""
+
     def save_sessions(self, sessions: List[Dict]):
         """Save session data to JSONL files."""
         try:
-            # Sort sessions by session_id
-            sessions = sorted(sessions, key=lambda x: x["session_id"])
+            # Remove duplicates based on session_id
+            unique_sessions = {}
+            for session in sessions:
+                session_id = session["session_id"]
+                if session_id not in unique_sessions:
+                    # Clean up session type if it's still a Drupal content type
+                    if "type" in session and "menu_link_content" in session["type"]:
+                        # Try to infer session type from title and description
+                        text_to_search = f"{session.get('title', '')} {session.get('description', '')}".lower()
+                        type_keywords = {
+                            'Breakout': ['breakout session', 'breakout'],
+                            'Deep Dive': ['deep dive', 'deep-dive', 'deepdive'],
+                            'Evening Event': ['evening event', 'evening session', 'evening'],
+                            'Keynote': ['keynote session', 'keynote'],
+                            'Lightning Talk': ['lightning talk', 'lightning'],
+                            'Meetup': ['meetup', 'meet-up', 'meet up'],
+                            'Paid Training': ['training session', 'paid training', 'workshop', 'tutorial'],
+                            'Special Interest': ['special interest', 'special-interest']
+                        }
+                        
+                        session_type = None
+                        for standard_type, keywords in type_keywords.items():
+                            if any(keyword in text_to_search for keyword in keywords):
+                                session_type = standard_type
+                                break
+                        
+                        # If still not found, default to "Breakout" as it's the most common type
+                        session["type"] = session_type or "Breakout"
+                    
+                    unique_sessions[session_id] = session
+            
+            # Convert back to list and sort by session_id
+            sessions = sorted(unique_sessions.values(), key=lambda x: x["session_id"])
             
             # Define the order of fields
             field_order = [
@@ -235,7 +310,6 @@ class DaisScraper:
                 "level",
                 "type",
                 "industry",
-                "category",
                 "areas_of_interest",
                 "speakers",
                 "schedule",
@@ -250,13 +324,9 @@ class DaisScraper:
                         ordered[field] = session[field]
                 return ordered
             
-            # Save all sessions
-            all_sessions_file = self.sessions_dir / "sessions_.jsonl"
-            with open(all_sessions_file, "w") as f:
-                for session in sessions:
-                    ordered = ordered_session(session)
-                    json.dump(ordered, f)
-                    f.write("\n")
+            # Clear existing files
+            for file in self.sessions_dir.glob("sessions_*.jsonl"):
+                file.unlink()
             
             # Save sessions by track
             tracks = {}
@@ -266,10 +336,19 @@ class DaisScraper:
                     tracks[track] = []
                 tracks[track].append(session)
             
+            # Save all sessions to a single file
+            all_sessions_file = self.sessions_dir / "sessions.jsonl"
+            with open(all_sessions_file, "w") as f:
+                for session in sessions:
+                    ordered = ordered_session(session)
+                    json.dump(ordered, f)
+                    f.write("\n")
+            
+            # Save sessions by track
             for track, track_sessions in tracks.items():
                 # Sort track sessions by session_id
                 track_sessions = sorted(track_sessions, key=lambda x: x["session_id"])
-                track_file = self.sessions_dir / f"sessions_{track.lower().replace(' ', '_')}.jsonl"
+                track_file = self.sessions_dir / f"sessions_by_track_{track.lower().replace(' ', '_')}.jsonl"
                 with open(track_file, "w") as f:
                     for session in track_sessions:
                         ordered = ordered_session(session)
@@ -314,9 +393,12 @@ class DaisScraper:
             
             logger.info(f"Found {len(session_urls)} unique session URLs")
             
+            # Convert to sorted list for consistent ordering
+            session_urls = sorted(list(session_urls))
+            
             # If in preview mode, limit the number of URLs to process
             if self.preview_mode:
-                session_urls = list(session_urls)[:self.preview_count]
+                session_urls = session_urls[:self.preview_count]
                 logger.info(f"Preview mode: Processing {len(session_urls)} sessions")
             
             # Process each session URL
@@ -700,6 +782,46 @@ class DaisScraper:
 
     def extract_metadata_from_dom(self, element: webdriver.remote.webelement.WebElement, selector_prefix: str, field_name: str) -> str:
         """Extract metadata from DOM using various selectors."""
+        # First try to find the table-like structure
+        table_selectors = [
+            # Look for table rows with labels
+            f'tr:has(th:contains("{field_name}")) td',
+            f'tr:has(th:contains("{field_name.capitalize()}")) td',
+            # Look for div pairs with labels
+            f'div:has(> div:contains("{field_name}")) > div:last-child',
+            f'div:has(> div:contains("{field_name.capitalize()}")) > div:last-child',
+            # Look for label-value pairs
+            f'div[class*="label"]:contains("{field_name}") + div',
+            f'div[class*="label"]:contains("{field_name.capitalize()}") + div',
+            # Look for specific class patterns
+            f'div[class*="{field_name}-value"]',
+            f'div[class*="{field_name}_value"]',
+            f'div[class*="session-{field_name}"]',
+            f'div[class*="event-{field_name}"]',
+            # Look for specific data attributes
+            f'[data-field="{field_name}"]',
+            f'[data-type="{field_name}"]',
+            f'[data-test="{field_name}"]'
+        ]
+        
+        for selector in table_selectors:
+            try:
+                elements = element.find_elements(By.CSS_SELECTOR, selector)
+                for el in elements:
+                    text = el.text.strip()
+                    if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
+                        # Clean up text
+                        text = re.sub(r'^(Track|Level|Type|Industry|Areas|Topics):\s*', '', text, flags=re.IGNORECASE)
+                        text = re.sub(r'menu_link_content--.*$', '', text).strip()
+                        if text:
+                            # Clean session type if this is the type field
+                            if field_name == 'type':
+                                text = self.clean_session_type(text)
+                            return text
+            except Exception as e:
+                logger.debug(f"Error extracting {field_name} with selector {selector}: {e}")
+        
+        # If table structure not found, try the original selectors as fallback
         selectors = [
             # Direct class matches
             f'{selector_prefix}[class*="{field_name}"]',
@@ -727,46 +849,8 @@ class DaisScraper:
             f'.session-{field_name}',
             f'.event-{field_name}',
             f'.{field_name}-value',
-            f'.{field_name}-text',
-            
-            # Additional specific selectors for track
-            f'div[class*="track"] {selector_prefix}',
-            f'span[class*="track"]',
-            f'div[class*="session-track"]',
-            f'div[class*="event-track"]',
-            
-            # Additional specific selectors for industry
-            f'div[class*="industry"] {selector_prefix}',
-            f'span[class*="industry"]',
-            f'div[class*="session-industry"]',
-            f'div[class*="event-industry"]',
-            
-            # Additional specific selectors for category
-            f'div[class*="category"] {selector_prefix}',
-            f'span[class*="category"]',
-            f'div[class*="session-category"]',
-            f'div[class*="event-category"]',
-            
-            # Additional specific selectors for areas of interest
-            f'div[class*="areas"] {selector_prefix}',
-            f'span[class*="areas"]',
-            f'div[class*="session-areas"]',
-            f'div[class*="event-areas"]',
-            f'div[class*="topics"] {selector_prefix}',
-            f'span[class*="topics"]',
-            f'div[class*="session-topics"]',
-            f'div[class*="event-topics"]'
+            f'.{field_name}-text'
         ]
-        
-        # Add variations with capitalized field name
-        field_name_cap = field_name.capitalize()
-        selectors.extend([
-            f'{selector_prefix}[class*="{field_name_cap}"]',
-            f'{selector_prefix}[data-test*="{field_name_cap}"]',
-            f'{selector_prefix}[data-type*="{field_name_cap}"]',
-            f'.session{field_name_cap}',
-            f'.event{field_name_cap}'
-        ])
         
         # Try each selector
         for selector in selectors:
@@ -775,11 +859,13 @@ class DaisScraper:
                 for el in elements:
                     text = el.text.strip()
                     if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
-                        # Clean up text by removing any label prefixes
-                        text = re.sub(r'^(Track|Level|Type|Industry|Category|Areas|Topics):\s*', '', text, flags=re.IGNORECASE)
-                        # Clean up text by removing any Drupal-specific content types
+                        # Clean up text
+                        text = re.sub(r'^(Track|Level|Type|Industry|Areas|Topics):\s*', '', text, flags=re.IGNORECASE)
                         text = re.sub(r'menu_link_content--.*$', '', text).strip()
                         if text:
+                            # Clean session type if this is the type field
+                            if field_name == 'type':
+                                text = self.clean_session_type(text)
                             return text
             except Exception as e:
                 logger.debug(f"Error extracting {field_name} with selector {selector}: {e}")
@@ -807,19 +893,13 @@ class DaisScraper:
                     r'Type:\s*([^\n]+)',
                     r'Session Type:\s*([^\n]+)',
                     r'Format:\s*([^\n]+)',
-                    r'(?:Keynote|Workshop|Breakout|Panel|Tutorial)'
+                    r'(?:Breakout|Deep Dive|Evening Event|Keynote|Lightning Talk|Meetup|Paid Training|Special Interest)'
                 ],
                 'industry': [
                     r'Industry:\s*([^\n]+)',
                     r'Sector:\s*([^\n]+)',
                     r'Vertical:\s*([^\n]+)',
                     r'(?:Financial Services|Healthcare|Retail|Manufacturing|Technology|Education|Government)'
-                ],
-                'category': [
-                    r'Category:\s*([^\n]+)',
-                    r'Topic:\s*([^\n]+)',
-                    r'Theme:\s*([^\n]+)',
-                    r'(?:Data Engineering|Data Science|Machine Learning|AI|Analytics|Business|Technical|Strategy)'
                 ]
             }
             
@@ -831,6 +911,11 @@ class DaisScraper:
                         text = match.group(1) if len(match.groups()) > 0 else match.group(0)
                         text = text.strip()
                         if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
+                            # Clean up text
+                            text = re.sub(r'menu_link_content--.*$', '', text).strip()
+                            # Clean session type if this is the type field
+                            if field_name == 'type':
+                                text = self.clean_session_type(text)
                             return text
         except Exception as e:
             logger.debug(f"Error extracting {field_name} from text content: {e}")
@@ -881,7 +966,6 @@ class DaisScraper:
                         "level": "",
                         "type": "",
                         "industry": "",
-                        "category": "",
                         "areas_of_interest": [],
                         "speakers": [],
                         "schedule": {
@@ -927,7 +1011,7 @@ class DaisScraper:
                             logger.debug(f"Error extracting description with selector {selector}: {e}")
                     
                     # Extract metadata fields using common selectors
-                    for field in ['track', 'level', 'type', 'industry', 'category']:
+                    for field in ['track', 'level', 'type', 'industry']:
                         # First try to get from Next.js data
                         if nextjs_data and "metadata" in nextjs_data:
                             value = nextjs_data["metadata"].get(field, "")
