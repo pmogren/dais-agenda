@@ -185,7 +185,6 @@ class DaisScraper:
                 session = {
                     "session_id": session_id,
                     "title": title,
-                    "description": description,
                     "track": track,
                     "level": level,
                     "type": session_type,
@@ -198,7 +197,8 @@ class DaisScraper:
                         "room": str(schedule_data.get("room", "")).strip(),
                         "start_time": str(schedule_data.get("start_time", "")).strip(),
                         "end_time": str(schedule_data.get("end_time", "")).strip()
-                    }
+                    },
+                    "description": description
                 }
                 
                 # Clean up empty values
@@ -227,11 +227,35 @@ class DaisScraper:
             # Sort sessions by session_id
             sessions = sorted(sessions, key=lambda x: x["session_id"])
             
+            # Define the order of fields
+            field_order = [
+                "session_id",
+                "title",
+                "track",
+                "level",
+                "type",
+                "industry",
+                "category",
+                "areas_of_interest",
+                "speakers",
+                "schedule",
+                "description"
+            ]
+            
+            def ordered_session(session):
+                """Create an ordered dictionary with fields in the specified order."""
+                ordered = {}
+                for field in field_order:
+                    if field in session:
+                        ordered[field] = session[field]
+                return ordered
+            
             # Save all sessions
             all_sessions_file = self.sessions_dir / "sessions_.jsonl"
             with open(all_sessions_file, "w") as f:
                 for session in sessions:
-                    json.dump(session, f)
+                    ordered = ordered_session(session)
+                    json.dump(ordered, f)
                     f.write("\n")
             
             # Save sessions by track
@@ -248,7 +272,8 @@ class DaisScraper:
                 track_file = self.sessions_dir / f"sessions_{track.lower().replace(' ', '_')}.jsonl"
                 with open(track_file, "w") as f:
                     for session in track_sessions:
-                        json.dump(session, f)
+                        ordered = ordered_session(session)
+                        json.dump(ordered, f)
                         f.write("\n")
             
             logger.info(f"Saved {len(sessions)} sessions to {self.sessions_dir}")
@@ -702,7 +727,35 @@ class DaisScraper:
             f'.session-{field_name}',
             f'.event-{field_name}',
             f'.{field_name}-value',
-            f'.{field_name}-text'
+            f'.{field_name}-text',
+            
+            # Additional specific selectors for track
+            f'div[class*="track"] {selector_prefix}',
+            f'span[class*="track"]',
+            f'div[class*="session-track"]',
+            f'div[class*="event-track"]',
+            
+            # Additional specific selectors for industry
+            f'div[class*="industry"] {selector_prefix}',
+            f'span[class*="industry"]',
+            f'div[class*="session-industry"]',
+            f'div[class*="event-industry"]',
+            
+            # Additional specific selectors for category
+            f'div[class*="category"] {selector_prefix}',
+            f'span[class*="category"]',
+            f'div[class*="session-category"]',
+            f'div[class*="event-category"]',
+            
+            # Additional specific selectors for areas of interest
+            f'div[class*="areas"] {selector_prefix}',
+            f'span[class*="areas"]',
+            f'div[class*="session-areas"]',
+            f'div[class*="event-areas"]',
+            f'div[class*="topics"] {selector_prefix}',
+            f'span[class*="topics"]',
+            f'div[class*="session-topics"]',
+            f'div[class*="event-topics"]'
         ]
         
         # Add variations with capitalized field name
@@ -723,7 +776,7 @@ class DaisScraper:
                     text = el.text.strip()
                     if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
                         # Clean up text by removing any label prefixes
-                        text = re.sub(r'^(Track|Level|Type|Industry|Category):\s*', '', text, flags=re.IGNORECASE)
+                        text = re.sub(r'^(Track|Level|Type|Industry|Category|Areas|Topics):\s*', '', text, flags=re.IGNORECASE)
                         # Clean up text by removing any Drupal-specific content types
                         text = re.sub(r'menu_link_content--.*$', '', text).strip()
                         if text:
@@ -741,7 +794,8 @@ class DaisScraper:
                 'track': [
                     r'Track:\s*([^\n]+)',
                     r'Session Track:\s*([^\n]+)',
-                    r'Event Track:\s*([^\n]+)'
+                    r'Event Track:\s*([^\n]+)',
+                    r'(?:Data Engineering|Data Science|Machine Learning|AI|Analytics|Business|Technical|Strategy)'
                 ],
                 'level': [
                     r'Level:\s*([^\n]+)',
@@ -758,12 +812,14 @@ class DaisScraper:
                 'industry': [
                     r'Industry:\s*([^\n]+)',
                     r'Sector:\s*([^\n]+)',
-                    r'Vertical:\s*([^\n]+)'
+                    r'Vertical:\s*([^\n]+)',
+                    r'(?:Financial Services|Healthcare|Retail|Manufacturing|Technology|Education|Government)'
                 ],
                 'category': [
                     r'Category:\s*([^\n]+)',
                     r'Topic:\s*([^\n]+)',
-                    r'Theme:\s*([^\n]+)'
+                    r'Theme:\s*([^\n]+)',
+                    r'(?:Data Engineering|Data Science|Machine Learning|AI|Analytics|Business|Technical|Strategy)'
                 ]
             }
             
@@ -897,8 +953,39 @@ class DaisScraper:
                             'div[class*="areas"]', 'div[class*="topics"]', 'div[class*="tags"]',
                             'span[class*="areas"]', 'span[class*="topics"]', 'span[class*="tags"]',
                             '[data-type="areas"]', '[data-test="session-areas"]',
-                            'ul[class*="tags"] li', 'div[class*="tag-list"] span'
+                            'ul[class*="tags"] li', 'div[class*="tag-list"] span',
+                            'div[class*="session-areas"]', 'div[class*="event-areas"]',
+                            'div[class*="session-topics"]', 'div[class*="event-topics"]',
+                            'div[class*="session-tags"]', 'div[class*="event-tags"]',
+                            'div[class*="metadata"] div[class*="areas"]',
+                            'div[class*="metadata"] div[class*="topics"]',
+                            'div[class*="metadata"] div[class*="tags"]'
                         ]
+                        
+                        # Also look for areas in the description text
+                        description_text = session_data["description"]
+                        if description_text:
+                            # Look for common data/AI topics in the description
+                            topics = [
+                                "Data Engineering", "Data Science", "Machine Learning", "AI", "Analytics",
+                                "Business Intelligence", "Data Governance", "Data Quality", "Data Security",
+                                "Data Privacy", "Data Lake", "Data Warehouse", "ETL", "ELT", "Streaming",
+                                "Real-time", "Batch Processing", "Data Modeling", "Data Architecture",
+                                "Data Integration", "Data Pipeline", "Data Mesh", "Data Fabric",
+                                "Delta Lake", "Apache Spark", "SQL", "Python", "R", "Scala",
+                                "Deep Learning", "NLP", "Computer Vision", "Recommendation Systems",
+                                "Time Series", "Anomaly Detection", "Feature Engineering",
+                                "Model Deployment", "MLOps", "Model Monitoring", "Model Governance"
+                            ]
+                            
+                            found_topics = []
+                            for topic in topics:
+                                if topic.lower() in description_text.lower():
+                                    found_topics.append(topic)
+                            
+                            if found_topics:
+                                session_data["areas_of_interest"].extend(found_topics)
+                        
                         for selector in areas_selectors:
                             try:
                                 areas_elements = element.find_elements(By.CSS_SELECTOR, selector)
@@ -907,12 +994,19 @@ class DaisScraper:
                                     for area_element in areas_elements:
                                         text = area_element.text.strip()
                                         if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
-                                            areas.extend(text.split(','))
+                                            # Split by common delimiters
+                                            split_areas = re.split(r'[,;|]|\s+and\s+', text)
+                                            areas.extend([area.strip() for area in split_areas if area.strip()])
                                     if areas:
-                                        session_data["areas_of_interest"] = [area.strip() for area in areas if area.strip()]
-                                        break
+                                        session_data["areas_of_interest"].extend(areas)
                             except Exception as e:
                                 logger.debug(f"Error extracting areas with selector {selector}: {e}")
+                        
+                        # Remove duplicates and empty values
+                        session_data["areas_of_interest"] = list(set(
+                            area for area in session_data["areas_of_interest"] 
+                            if area and not area.startswith(('IMAGE COMING SOON', 'RETURN TO ALL'))
+                        ))
                     
                     # Extract schedule information
                     # First try to get from Next.js data
