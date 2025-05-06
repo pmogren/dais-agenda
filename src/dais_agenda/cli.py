@@ -53,7 +53,7 @@ def list(
     
     # Create table
     table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("ID", style="dim")
+    table.add_column("ID")
     table.add_column("Title")
     table.add_column("Track")
     table.add_column("Level")
@@ -65,7 +65,7 @@ def list(
         table.add_column("Speakers")
     
     # Add rows
-    for _, session in sessions.iterrows():
+    for idx, session in sessions.iterrows():
         # Get user data if available
         session_data = manager.get_session_with_user_data(session["session_id"])
         
@@ -78,10 +78,10 @@ def list(
         indicators = []
         
         if session_data and "user_interest" in session_data:
-            indicators.append(f"[cyan]({session_data['user_interest']}★ interest)[/cyan]")
+            indicators.append(f"[cyan]({int(session_data['user_interest'])}★ interest)[/cyan]")
         
         if session_data and "user_rating" in session_data:
-            indicators.append(f"[yellow]({session_data['user_rating']}★ rating)[/yellow]")
+            indicators.append(f"[yellow]({int(session_data['user_rating'])}★ rating)[/yellow]")
         
         if indicators:
             title = f"{title} {' '.join(indicators)}"
@@ -91,19 +91,21 @@ def list(
             tags = " ".join(f"[blue]#{tag}[/blue]" for tag in session_data["user_tags"])
             title = f"{title}\n{tags}"
         
+        # Apply alternating row style to all columns
+        style = "dim" if idx % 2 == 0 else None
         row = [
-            session["session_id"],
-            title,
-            session["track"],
-            session["level"],
-            time_str,
-            schedule.get("room", "")
+            f"[{style}]{session['session_id']}[/]" if style else session["session_id"],
+            f"[{style}]{title}[/]" if style else title,
+            f"[{style}]{session['track']}[/]" if style else session["track"],
+            f"[{style}]{session['level']}[/]" if style else session["level"],
+            f"[{style}]{time_str}[/]" if style else time_str,
+            f"[{style}]{schedule.get('room', '')}[/]" if style else schedule.get("room", "")
         ]
         
         if show_details:
             row.extend([
-                session["description"],
-                "\n".join(session["speakers"])
+                f"[{style}]{session['description']}[/]" if style else session["description"],
+                f"[{style}]{chr(10).join(session['speakers'])}[/]" if style else chr(10).join(session["speakers"])
             ])
         
         table.add_row(*row)
