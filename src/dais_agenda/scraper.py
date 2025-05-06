@@ -962,7 +962,7 @@ class DaisScraper:
                             "Data Privacy", "Data Lake", "Data Warehouse", "ETL", "ELT", "Streaming",
                             "Real-time", "Batch Processing", "Data Modeling", "Data Architecture",
                             "Data Integration", "Data Pipeline", "Data Mesh", "Data Fabric",
-                            "Delta Lake", "Apache Spark", "SQL", "Python", "R", "Scala"
+                            "Delta Lake", "Apache Spark", "SQL", "Python", "Scala"
                         ]
                         
                         found_topics = []
