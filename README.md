@@ -64,7 +64,7 @@ python -m dais_agenda.scraper --preview --preview-count 5
 
 This will:
 - Fetch session data from the Databricks website using Selenium
-- Save all sessions in a single JSONL file at `data/sessions_.jsonl`
+- Save all sessions in a single JSONL file at `data/sessions_.jsonl` as well as in track-specific files
 - Each session entry includes:
   - Session ID, title, and description
   - Track, level, and type
@@ -87,12 +87,12 @@ python -m dais_agenda.cli list --track "Data Engineering and Streaming"
 
 To rate a session:
 ```bash
-python -m dais_agenda.cli rate --session-id "D25L3395" --rating 5
+python -m dais_agenda.cli rate --session-id "10-reasons-use-databricks-delta-live-tables-your-next-data-processing" --rating 5
 ```
 
 To add tags to a session:
 ```bash
-python -m dais_agenda.cli tag --session-id "D25L3395" --tags "spark,streaming,etl"
+python -m dais_agenda.cli tag --session-id "10-reasons-use-databricks-delta-live-tables-your-next-data-processing" --tags "spark,streaming,etl"
 ```
 
 To get recommendations based on your ratings and tags:
