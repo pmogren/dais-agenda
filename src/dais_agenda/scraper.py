@@ -743,48 +743,28 @@ class DaisScraper:
         speakers = []
         seen_names = set()  # Track unique names to avoid duplicates
         
-        # Look for patterns like "Name\n/Title\nCompany" or "Name\n/Title"
-        speaker_pattern = r'([^\n/]+)\n/([^\n]+)(?:\n([^\n/]+))?'
+        # Look for patterns like "/Title\nCompany" or "/Title" at the end of the text
+        speaker_pattern = r'/([^/\n]+)(?:\n([^/\n]+))?$'
         matches = re.finditer(speaker_pattern, text)
         
         for match in matches:
-            name = match.group(1).strip()
-            title = match.group(2).strip()
-            company = match.group(3).strip() if match.group(3) else ""
+            title = match.group(1).strip()
+            company = match.group(2).strip() if match.group(2) else ""
             
-            # Skip if name is a placeholder or navigation text
-            if (name.startswith('IMAGE COMING SOON') or 
-                name.startswith('RETURN TO ALL SESSIONS') or
-                not name):
+            # Skip if title is empty or contains placeholder text
+            if not title or title.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
                 continue
             
-            # Clean up name by removing duplicates within it
-            name_parts = name.split()
-            clean_name = ' '.join(dict.fromkeys(name_parts))
+            # Clean up title and company
+            title_parts = title.split()
+            clean_title = ' '.join(dict.fromkeys(title_parts))
             
-            # Clean up company name by removing duplicates
             if company:
                 company_parts = company.split()
                 clean_company = ' '.join(dict.fromkeys(company_parts))
+                speakers.append(f"{clean_title}, {clean_company}")
             else:
-                # Try to extract company from title if not provided separately
-                company_match = re.search(r',\s*([^,]+)$', title)
-                if company_match:
-                    clean_company = company_match.group(1).strip()
-                    title = title[:company_match.start()].strip()
-                else:
-                    clean_company = ""
-            
-            # Create unique speaker identifier
-            speaker_key = f"{clean_name}:{clean_company}"
-            
-            # Only add if we haven't seen this speaker before
-            if speaker_key not in seen_names:
-                seen_names.add(speaker_key)
-                if clean_company:
-                    speakers.append(f"{clean_name} ({title}, {clean_company})")
-                else:
-                    speakers.append(f"{clean_name} ({title})")
+                speakers.append(clean_title)
         
         return speakers
 
@@ -792,34 +772,11 @@ class DaisScraper:
         """Extract metadata from DOM using various selectors."""
         # First try to find the table-like structure with more specific selectors
         table_selectors = [
-            # Look for table cells with specific text and classes (case-insensitive)
-            f'tr:has(th:contains("{field_name}")) td',
+            # Look for table cells with specific text
             f'tr:has(th:contains("{field_name.upper()}")) td',
-            f'tr:has(th:contains("{field_name.lower()}")) td',
-            # Look for table cells with specific classes
-            f'tr th[class*="label"]:contains("{field_name}") + td',
-            f'tr th[class*="header"]:contains("{field_name}") + td',
-            f'tr th[class*="title"]:contains("{field_name}") + td',
-            # Look for table cells with specific data attributes
-            f'tr th[data-field="{field_name}"] + td',
-            f'tr th[data-type="{field_name}"] + td',
-            f'tr th[data-test="{field_name}"] + td',
-            # Look for table cells with specific text content
-            f'tr:has(th:contains("TYPE")) td',
-            f'tr:has(th:contains("TRACK")) td',
-            f'tr:has(th:contains("LEVEL")) td',
-            f'tr:has(th:contains("INDUSTRY")) td',
-            f'tr:has(th:contains("TECHNOLOGIES")) td',
-            f'tr:has(th:contains("DURATION")) td',
-            f'tr:has(th:contains("EXPERIENCE")) td',
             # Look for table cells with specific classes and text
-            f'tr th.text-base.font-medium.uppercase:contains("{field_name}") + td',
             f'tr th.text-base.font-medium.uppercase:contains("{field_name.upper()}") + td',
-            f'tr th.text-base.font-medium.uppercase:contains("{field_name.lower()}") + td',
-            # Look for table cells with specific text and classes
-            f'tr:has(th.text-base.font-medium.uppercase:contains("{field_name}")) td.text-base.font-normal.uppercase',
-            f'tr:has(th.text-base.font-medium.uppercase:contains("{field_name.upper()}")) td.text-base.font-normal.uppercase',
-            f'tr:has(th.text-base.font-medium.uppercase:contains("{field_name.lower()}")) td.text-base.font-normal.uppercase'
+            f'tr:has(th.text-base.font-medium.uppercase:contains("{field_name.upper()}")) td.text-base.font-normal.uppercase'
         ]
         
         for selector in table_selectors:
@@ -839,125 +796,42 @@ class DaisScraper:
             except Exception as e:
                 logger.debug(f"Error extracting {field_name} with selector {selector}: {e}")
         
-        # If table structure not found, try the original selectors as fallback
-        selectors = [
-            # Direct class matches
-            f'{selector_prefix}[class*="{field_name}"]',
-            f'{selector_prefix}[data-test*="{field_name}"]',
-            f'{selector_prefix}[data-type*="{field_name}"]',
-            
-            # Label + value patterns
-            f'[class*="{field_name}-label"] + {selector_prefix}',
-            f'[data-test*="{field_name}-label"] + {selector_prefix}',
-            f'[data-type*="{field_name}-label"] + {selector_prefix}',
-            
-            # Common metadata patterns
-            f'dt[class*="{field_name}"] + dd',
-            f'th[class*="{field_name}"] + td',
-            f'div[class*="metadata"] {selector_prefix}[class*="{field_name}"]',
-            f'div[class*="details"] {selector_prefix}[class*="{field_name}"]',
-            f'div[class*="info"] {selector_prefix}[class*="{field_name}"]',
-            
-            # Attribute-based selectors
-            f'{selector_prefix}[aria-label*="{field_name}"]',
-            f'{selector_prefix}[title*="{field_name}"]',
-            f'{selector_prefix}[name*="{field_name}"]',
-            
-            # Common class patterns
-            f'.session-{field_name}',
-            f'.event-{field_name}',
-            f'.{field_name}-value',
-            f'.{field_name}-text'
-        ]
-        
-        # Try each selector
-        for selector in selectors:
-            try:
-                elements = element.find_elements(By.CSS_SELECTOR, selector)
-                for el in elements:
-                    text = el.text.strip()
-                    if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
-                        # Clean up text
-                        text = re.sub(r'^(Track|Level|Type|Industry|Areas|Topics|Technologies|Duration|Experience):\s*', '', text, flags=re.IGNORECASE)
-                        text = re.sub(r'menu_link_content--.*$', '', text).strip()
-                        if text:
-                            # Clean session type if this is the type field
-                            if field_name == 'type':
-                                text = self.clean_session_type(text)
-                            return text
-            except Exception as e:
-                logger.debug(f"Error extracting {field_name} with selector {selector}: {e}")
-        
-        # Try looking for text that matches common patterns for this field
+        # If table structure not found, try looking for text that matches common patterns for this field
         try:
             # Get all text content
             text_content = element.text
             
-            # Define patterns for each field type (including uppercase variations)
+            # Define patterns for each field type
             patterns = {
                 'track': [
                     r'Track:\s*([^\n]+)',
-                    r'TRACK:\s*([^\n]+)',
-                    r'Session Track:\s*([^\n]+)',
-                    r'SESSION TRACK:\s*([^\n]+)',
-                    r'(?:Data Engineering|Data Science|Machine Learning|AI|Analytics|Business|Technical|Strategy)',
-                    r'(?:DATA ENGINEERING|DATA SCIENCE|MACHINE LEARNING|AI|ANALYTICS|BUSINESS|TECHNICAL|STRATEGY)'
+                    r'TRACK:\s*([^\n]+)'
                 ],
                 'level': [
                     r'Level:\s*([^\n]+)',
                     r'LEVEL:\s*([^\n]+)',
-                    r'Difficulty:\s*([^\n]+)',
-                    r'DIFFICULTY:\s*([^\n]+)',
-                    r'Experience Level:\s*([^\n]+)',
-                    r'EXPERIENCE LEVEL:\s*([^\n]+)',
                     r'Skill Level:\s*([^\n]+)',
-                    r'SKILL LEVEL:\s*([^\n]+)',
-                    r'(?:Beginner|Intermediate|Advanced|Expert)',
-                    r'(?:BEGINNER|INTERMEDIATE|ADVANCED|EXPERT)'
+                    r'SKILL LEVEL:\s*([^\n]+)'
                 ],
                 'type': [
                     r'Type:\s*([^\n]+)',
-                    r'TYPE:\s*([^\n]+)',
-                    r'Session Type:\s*([^\n]+)',
-                    r'SESSION TYPE:\s*([^\n]+)',
-                    r'Format:\s*([^\n]+)',
-                    r'FORMAT:\s*([^\n]+)',
-                    r'(?:Breakout|Deep Dive|Evening Event|Keynote|Lightning Talk|Meetup|Paid Training|Special Interest)',
-                    r'(?:BREAKOUT|DEEP DIVE|EVENING EVENT|KEYNOTE|LIGHTNING TALK|MEETUP|PAID TRAINING|SPECIAL INTEREST)'
+                    r'TYPE:\s*([^\n]+)'
                 ],
                 'industry': [
                     r'Industry:\s*([^\n]+)',
-                    r'INDUSTRY:\s*([^\n]+)',
-                    r'Sector:\s*([^\n]+)',
-                    r'SECTOR:\s*([^\n]+)',
-                    r'Vertical:\s*([^\n]+)',
-                    r'VERTICAL:\s*([^\n]+)',
-                    r'(?:Financial Services|Healthcare|Retail|Manufacturing|Technology|Education|Government|Professional Services)',
-                    r'(?:FINANCIAL SERVICES|HEALTHCARE|RETAIL|MANUFACTURING|TECHNOLOGY|EDUCATION|GOVERNMENT|PROFESSIONAL SERVICES)'
+                    r'INDUSTRY:\s*([^\n]+)'
                 ],
                 'technologies': [
                     r'Technologies:\s*([^\n]+)',
-                    r'TECHNOLOGIES:\s*([^\n]+)',
-                    r'Tech Stack:\s*([^\n]+)',
-                    r'TECH STACK:\s*([^\n]+)',
-                    r'(?:Apache Spark|Delta Lake|DLT|SQL|Python|R|Scala|Java|JavaScript|TypeScript)',
-                    r'(?:APACHE SPARK|DELTA LAKE|DLT|SQL|PYTHON|R|SCALA|JAVA|JAVASCRIPT|TYPESCRIPT)'
+                    r'TECHNOLOGIES:\s*([^\n]+)'
                 ],
                 'duration': [
                     r'Duration:\s*([^\n]+)',
-                    r'DURATION:\s*([^\n]+)',
-                    r'Length:\s*([^\n]+)',
-                    r'LENGTH:\s*([^\n]+)',
-                    r'(\d+)\s*(?:min|minute|minutes)',
-                    r'(\d+)\s*(?:MIN|MINUTE|MINUTES)'
+                    r'DURATION:\s*([^\n]+)'
                 ],
                 'experience': [
                     r'Experience:\s*([^\n]+)',
-                    r'EXPERIENCE:\s*([^\n]+)',
-                    r'Format:\s*([^\n]+)',
-                    r'FORMAT:\s*([^\n]+)',
-                    r'(?:In Person|Virtual|Hybrid|Online)',
-                    r'(?:IN PERSON|VIRTUAL|HYBRID|ONLINE)'
+                    r'EXPERIENCE:\s*([^\n]+)'
                 ]
             }
             
@@ -994,16 +868,8 @@ class DaisScraper:
                 logger.warning(f"Timeout waiting for page to load: {e}")
                 return []
             
-            # Try to find Next.js data structure first
-            nextjs_data = self.extract_nextjs_data()
-            if nextjs_data:
-                logger.info("Found Next.js data structure")
-            
-            # Look for session details container with more flexible selectors
-            session_elements = self.driver.find_elements(
-                By.CSS_SELECTOR, 
-                'div[class*="session"], div[class*="agenda"], div[class*="event"], article, main'
-            )
+            # Look for session details container
+            session_elements = self.driver.find_elements(By.CSS_SELECTOR, 'article, main')
             
             if not session_elements:
                 logger.warning("No session elements found in DOM")
@@ -1011,7 +877,7 @@ class DaisScraper:
             
             for element in session_elements:
                 try:
-                    # Use URL path segment as session ID if available, otherwise generate UUID
+                    # Use URL path segment as session ID
                     session_id = session_url.split("/")[-1] if session_url else str(uuid.uuid4())
                     
                     session_data = {
@@ -1035,39 +901,20 @@ class DaisScraper:
                         }
                     }
                     
-                    # Extract title - check multiple possible selectors
-                    title_selectors = [
-                        'h1', 'h2', 'h3', 'h4', '[class*="title"]', '[class*="heading"]',
-                        '[data-type="title"]', '[data-test="session-title"]', 'title'
-                    ]
-                    for selector in title_selectors:
-                        try:
-                            title_element = element.find_elements(By.CSS_SELECTOR, selector)
-                            if title_element and title_element[0].text.strip():
-                                session_data["title"] = title_element[0].text.strip()
-                                break
-                        except Exception as e:
-                            logger.debug(f"Error extracting title with selector {selector}: {e}")
+                    # Extract title
+                    title_element = element.find_elements(By.CSS_SELECTOR, 'h1')
+                    if title_element:
+                        session_data["title"] = title_element[0].text.strip()
                     
-                    # Extract description - look for content sections
-                    description_selectors = [
-                        'div[class*="content"]', 'div[class*="description"]', 'div[class*="abstract"]',
-                        'div[class*="summary"]', 'div[class*="text"]', 'p'
-                    ]
-                    for selector in description_selectors:
-                        try:
-                            desc_elements = element.find_elements(By.CSS_SELECTOR, selector)
-                            if desc_elements:
-                                # Get the full text including speaker information
-                                full_text = " ".join(e.text.strip() for e in desc_elements if e.text.strip())
-                                if full_text:
-                                    # Extract speakers from the text
-                                    session_data["speakers"] = self.extract_speakers_from_text(full_text)
-                                    # Clean up the description text
-                                    session_data["description"] = self.clean_text(full_text)
-                                    break
-                        except Exception as e:
-                            logger.debug(f"Error extracting description with selector {selector}: {e}")
+                    # Extract description
+                    desc_elements = element.find_elements(By.CSS_SELECTOR, 'div[class*="content"], div[class*="description"], p')
+                    if desc_elements:
+                        full_text = " ".join(e.text.strip() for e in desc_elements if e.text.strip())
+                        if full_text:
+                            # Extract speakers from the text
+                            session_data["speakers"] = self.extract_speakers_from_text(full_text)
+                            # Clean up the description text
+                            session_data["description"] = self.clean_text(full_text)
                     
                     # Extract metadata from the table structure
                     try:
@@ -1105,160 +952,27 @@ class DaisScraper:
                     except Exception as e:
                         logger.debug(f"Error extracting metadata table: {e}")
                     
-                    # If we didn't find the metadata in the table, try other methods
-                    if not any([session_data['track'], session_data['level'], session_data['type'], 
-                               session_data['industry'], session_data['technologies'], 
-                               session_data['duration'], session_data['experience']]):
-                        logger.info("No metadata found in table, trying other methods...")
-                        # Extract metadata fields using common selectors
-                        for field in ['track', 'level', 'type', 'industry', 'technologies', 'duration', 'experience']:
-                            # First try to get from Next.js data
-                            if nextjs_data and "metadata" in nextjs_data:
-                                value = nextjs_data["metadata"].get(field, "")
-                                if value:
-                                    if field == 'technologies':
-                                        # Split technologies by comma and clean each one
-                                        session_data[field] = [tech.strip() for tech in value.split(',') if tech.strip()]
-                                    else:
-                                        session_data[field] = value
-                                    continue
-                            
-                            # If not found in Next.js data, try DOM selectors
-                            value = self.extract_metadata_from_dom(element, 'div', field)
-                            if not value:
-                                value = self.extract_metadata_from_dom(element, 'span', field)
-                            
-                            if field == 'technologies':
-                                # Split technologies by comma and clean each one
-                                session_data[field] = [tech.strip() for tech in value.split(',') if tech.strip()]
-                            else:
-                                session_data[field] = value
-                    
-                    # Extract areas of interest
-                    # First try to get from Next.js data
-                    if nextjs_data and "areas_of_interest" in nextjs_data:
-                        areas = nextjs_data["areas_of_interest"]
-                        if areas:
-                            session_data["areas_of_interest"] = areas
-                    else:
-                        # If not found in Next.js data, try DOM selectors
-                        areas_selectors = [
-                            'div[class*="areas"]', 'div[class*="topics"]', 'div[class*="tags"]',
-                            'span[class*="areas"]', 'span[class*="topics"]', 'span[class*="tags"]',
-                            '[data-type="areas"]', '[data-test="session-areas"]',
-                            'ul[class*="tags"] li', 'div[class*="tag-list"] span',
-                            'div[class*="session-areas"]', 'div[class*="event-areas"]',
-                            'div[class*="session-topics"]', 'div[class*="event-topics"]',
-                            'div[class*="session-tags"]', 'div[class*="event-tags"]',
-                            'div[class*="metadata"] div[class*="areas"]',
-                            'div[class*="metadata"] div[class*="topics"]',
-                            'div[class*="metadata"] div[class*="tags"]'
+                    # Extract areas of interest from description text
+                    description_text = session_data["description"]
+                    if description_text:
+                        # Look for common data/AI topics in the description
+                        topics = [
+                            "Data Engineering", "Data Science", "Machine Learning", "AI", "Analytics",
+                            "Business Intelligence", "Data Governance", "Data Quality", "Data Security",
+                            "Data Privacy", "Data Lake", "Data Warehouse", "ETL", "ELT", "Streaming",
+                            "Real-time", "Batch Processing", "Data Modeling", "Data Architecture",
+                            "Data Integration", "Data Pipeline", "Data Mesh", "Data Fabric",
+                            "Delta Lake", "Apache Spark", "SQL", "Python", "R", "Scala"
                         ]
                         
-                        # Also look for areas in the description text
-                        description_text = session_data["description"]
-                        if description_text:
-                            # Look for common data/AI topics in the description
-                            topics = [
-                                "Data Engineering", "Data Science", "Machine Learning", "AI", "Analytics",
-                                "Business Intelligence", "Data Governance", "Data Quality", "Data Security",
-                                "Data Privacy", "Data Lake", "Data Warehouse", "ETL", "ELT", "Streaming",
-                                "Real-time", "Batch Processing", "Data Modeling", "Data Architecture",
-                                "Data Integration", "Data Pipeline", "Data Mesh", "Data Fabric",
-                                "Delta Lake", "Apache Spark", "SQL", "Python", "R", "Scala",
-                                "Deep Learning", "NLP", "Computer Vision", "Recommendation Systems",
-                                "Time Series", "Anomaly Detection", "Feature Engineering",
-                                "Model Deployment", "MLOps", "Model Monitoring", "Model Governance"
-                            ]
-                            
-                            found_topics = []
-                            for topic in topics:
-                                if topic.lower() in description_text.lower():
-                                    found_topics.append(topic)
-                            
-                            if found_topics:
-                                session_data["areas_of_interest"].extend(found_topics)
+                        found_topics = []
+                        for topic in topics:
+                            if topic.lower() in description_text.lower():
+                                found_topics.append(topic)
                         
-                        for selector in areas_selectors:
-                            try:
-                                areas_elements = element.find_elements(By.CSS_SELECTOR, selector)
-                                if areas_elements:
-                                    areas = []
-                                    for area_element in areas_elements:
-                                        text = area_element.text.strip()
-                                        if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
-                                            # Split by common delimiters
-                                            split_areas = re.split(r'[,;|]|\s+and\s+', text)
-                                            areas.extend([area.strip() for area in split_areas if area.strip()])
-                                    if areas:
-                                        session_data["areas_of_interest"].extend(areas)
-                            except Exception as e:
-                                logger.debug(f"Error extracting areas with selector {selector}: {e}")
-                        
-                        # Remove duplicates and empty values
-                        session_data["areas_of_interest"] = list(set(
-                            area for area in session_data["areas_of_interest"] 
-                            if area and not area.startswith(('IMAGE COMING SOON', 'RETURN TO ALL'))
-                        ))
-                    
-                    # Extract schedule information
-                    # First try to get from Next.js data
-                    if nextjs_data and "schedule" in nextjs_data:
-                        schedule = nextjs_data["schedule"]
-                        if schedule:
-                            session_data["schedule"].update(schedule)
-                    else:
-                        # If not found in Next.js data, try DOM selectors
-                        schedule_selectors = [
-                            'div[class*="schedule"]', 'div[class*="time"]', 'div[class*="date"]',
-                            'span[class*="schedule"]', 'span[class*="time"]', 'span[class*="date"]',
-                            '[data-type="schedule"]', '[data-test="session-schedule"]',
-                            '[class*="datetime"]', '[class*="session-time"]'
-                        ]
-                        for selector in schedule_selectors:
-                            try:
-                                schedule_elements = element.find_elements(By.CSS_SELECTOR, selector)
-                                if schedule_elements:
-                                    schedule_text = schedule_elements[0].text.strip()
-                                    if schedule_text:
-                                        # Look for day
-                                        day_patterns = [
-                                            r'(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)',
-                                            r'\d{1,2}/\d{1,2}(?:/\d{2,4})?',
-                                            r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}(?:st|nd|rd|th)?(?:,? \d{4})?'
-                                        ]
-                                        for pattern in day_patterns:
-                                            match = re.search(pattern, schedule_text, re.IGNORECASE)
-                                            if match:
-                                                session_data["schedule"]["day"] = match.group(0)
-                                                break
-                                        
-                                        # Look for time
-                                        time_patterns = [
-                                            r'(\d{1,2}:\d{2}\s*[AP]M)\s*[-–]\s*(\d{1,2}:\d{2}\s*[AP]M)',
-                                            r'(\d{1,2}(?::\d{2})?\s*[AP]M)\s*[-–]\s*(\d{1,2}(?::\d{2})?\s*[AP]M)'
-                                        ]
-                                        for pattern in time_patterns:
-                                            match = re.search(pattern, schedule_text)
-                                            if match:
-                                                session_data["schedule"]["start_time"] = match.group(1)
-                                                session_data["schedule"]["end_time"] = match.group(2)
-                                                break
-                                        
-                                        # Look for room/location
-                                        room_patterns = [
-                                            r'(?:Room|Location|Venue):\s*([^\n,]+)',
-                                            r'(?:Room|Location|Venue)\s+([A-Z0-9][^\n,]*)',
-                                            r'(?:^|\s)(?:Room|Location|Venue)\s+([^\n,]+)'
-                                        ]
-                                        for pattern in room_patterns:
-                                            match = re.search(pattern, schedule_text, re.IGNORECASE)
-                                            if match:
-                                                session_data["schedule"]["room"] = match.group(1).strip()
-                                                break
-                                    break
-                            except Exception as e:
-                                logger.debug(f"Error extracting schedule with selector {selector}: {e}")
+                        if found_topics:
+                            session_data["areas_of_interest"].extend(found_topics)
+                            session_data["areas_of_interest"] = list(set(session_data["areas_of_interest"]))
                     
                     # Only add sessions that have at least a title
                     if session_data["title"]:
