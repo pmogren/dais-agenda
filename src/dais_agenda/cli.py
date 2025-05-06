@@ -105,32 +105,46 @@ def list(
 
 @app.command()
 def rate(
-    session_id: str = typer.Argument(..., help="Session ID to rate"),
-    rating: int = typer.Argument(..., help="Rating (1-5)"),
+    session_id: str = typer.Argument(..., help="Session ID to rate (use 0 to remove rating)"),
+    rating: int = typer.Argument(..., help="Rating (0-5, where 0 removes the rating)"),
     notes: str = typer.Option("", help="Optional notes about the session")
 ):
-    """Rate a session."""
+    """Rate a session or remove a rating."""
     setup_logging()
     manager = SessionManager()
     
-    if rating < 1 or rating > 5:
-        console.print("[red]Rating must be between 1 and 5[/red]")
+    if rating < 0 or rating > 5:
+        console.print("[red]Rating must be between 0 and 5 (0 removes the rating)[/red]")
         raise typer.Exit(1)
     
-    manager.add_rating(session_id, rating, notes)
-    console.print(f"[green]Successfully rated session {session_id} with {rating} stars[/green]")
+    if rating == 0:
+        manager.remove_rating(session_id)
+        console.print(f"[green]Successfully removed rating for session {session_id}[/green]")
+    else:
+        manager.add_rating(session_id, rating, notes)
+        console.print(f"[green]Successfully rated session {session_id} with {rating} stars[/green]")
 
 @app.command()
 def tag(
     session_id: str = typer.Argument(..., help="Session ID to tag"),
-    tags: List[str] = typer.Argument(..., help="Tags to add (comma-separated)")
+    tags: str = typer.Argument(..., help="Space-separated list of tags to add (prefix with ^ to remove)")
 ):
-    """Add tags to a session."""
+    """Add or remove tags from a session."""
     setup_logging()
     manager = SessionManager()
     
-    manager.add_tags(session_id, tags)
-    console.print(f"[green]Successfully added tags to session {session_id}: {', '.join(tags)}[/green]")
+    # Split tags string into list and separate add/remove tags
+    tag_list = [tag.strip() for tag in tags.split()]
+    tags_to_add = [tag for tag in tag_list if not tag.startswith("^")]
+    tags_to_remove = [tag[1:] for tag in tag_list if tag.startswith("^")]
+    
+    if tags_to_add:
+        manager.add_tags(session_id, tags_to_add)
+        console.print(f"[green]Successfully added tags to session {session_id}: {', '.join(tags_to_add)}[/green]")
+    
+    if tags_to_remove:
+        manager.remove_tags(session_id, tags_to_remove)
+        console.print(f"[green]Successfully removed tags from session {session_id}: {', '.join(tags_to_remove)}[/green]")
 
 @app.command()
 def recommend(

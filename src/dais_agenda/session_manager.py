@@ -77,52 +77,20 @@ class SessionManager:
             self.sessions_df["description"].str.lower().str.contains(query)
         ]
 
-    def add_rating(self, session_id: str, rating: int, notes: str = ""):
-        """Add a rating and notes to a session."""
-        if session_id not in self.sessions_df["session_id"].values:
-            logger.error(f"Session {session_id} not found")
-            return
-
-        # Create new rating entry
-        new_rating = {
-            "session_id": session_id,
-            "rating": rating,
-            "notes": notes,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        }
-
-        # Update or add rating
-        if not self.ratings_df.empty and session_id in self.ratings_df["session_id"].values:
-            self.ratings_df.loc[self.ratings_df["session_id"] == session_id] = new_rating
-        else:
-            self.ratings_df = pd.concat([self.ratings_df, pd.DataFrame([new_rating])], ignore_index=True)
-
-        self._save_user_data(self.ratings_df, "ratings.jsonl")
-
-    def add_tags(self, session_id: str, tags: List[str]):
-        """Add custom tags to a session."""
-        if session_id not in self.sessions_df["session_id"].values:
-            logger.error(f"Session {session_id} not found")
-            return
-
-        # Create new tags entry
-        new_tags = {
-            "session_id": session_id,
-            "tags": tags,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
-        }
-
-        # Update or add tags
-        if not self.tags_df.empty and session_id in self.tags_df["session_id"].values:
-            self.tags_df.loc[self.tags_df["session_id"] == session_id] = new_tags
-        else:
-            self.tags_df = pd.concat([self.tags_df, pd.DataFrame([new_tags])], ignore_index=True)
-
-        self._save_user_data(self.tags_df, "tags.jsonl")
-
     def get_session_with_user_data(self, session_id: str) -> Optional[Dict]:
         """Get a session with its user data (ratings and tags)."""
+        # First try exact match
         session = self.sessions_df[self.sessions_df["session_id"] == session_id]
+        
+        # If no exact match, try prefix match
+        if session.empty:
+            matching_sessions = self.sessions_df[self.sessions_df["session_id"].str.startswith(session_id)]
+            if len(matching_sessions) == 1:
+                session = matching_sessions
+            elif len(matching_sessions) > 1:
+                logger.warning(f"Multiple sessions found with prefix '{session_id}': {', '.join(matching_sessions['session_id'])}")
+                return None
+        
         if session.empty:
             return None
 
@@ -140,6 +108,123 @@ class SessionManager:
             session_data["user_tags"] = tags_data["tags"]
         
         return session_data
+
+    def find_session_by_prefix(self, prefix: str) -> Optional[str]:
+        """Find a session ID by prefix. Returns the full session ID if exactly one match is found."""
+        matching_sessions = self.sessions_df[self.sessions_df["session_id"].str.startswith(prefix)]
+        if len(matching_sessions) == 1:
+            return matching_sessions.iloc[0]["session_id"]
+        elif len(matching_sessions) > 1:
+            logger.warning(f"Multiple sessions found with prefix '{prefix}': {', '.join(matching_sessions['session_id'])}")
+        return None
+
+    def add_rating(self, session_id: str, rating: int, notes: str = "") -> None:
+        """Add or update a rating for a session."""
+        # First try exact match
+        if session_id not in self.sessions_df["session_id"].values:
+            # If not found, try prefix match
+            full_session_id = self.find_session_by_prefix(session_id)
+            if not full_session_id:
+                raise ValueError(f"Session not found: {session_id}")
+            session_id = full_session_id
+        
+        # Create new rating entry
+        new_rating = {
+            "session_id": session_id,
+            "rating": rating,
+            "notes": notes,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
+        }
+
+        # Update or add rating
+        if not self.ratings_df.empty and session_id in self.ratings_df["session_id"].values:
+            self.ratings_df.loc[self.ratings_df["session_id"] == session_id] = new_rating
+        else:
+            self.ratings_df = pd.concat([self.ratings_df, pd.DataFrame([new_rating])], ignore_index=True)
+
+        self._save_user_data(self.ratings_df, "ratings.jsonl")
+
+    def remove_rating(self, session_id: str) -> None:
+        """Remove all ratings for a session."""
+        # First try exact match
+        if session_id not in self.sessions_df["session_id"].values:
+            # If not found, try prefix match
+            full_session_id = self.find_session_by_prefix(session_id)
+            if not full_session_id:
+                raise ValueError(f"Session not found: {session_id}")
+            session_id = full_session_id
+        
+        # If ratings DataFrame is empty, there's nothing to remove
+        if self.ratings_df.empty:
+            return
+        
+        # Remove all ratings but keep tags
+        self.ratings_df = self.ratings_df[self.ratings_df["session_id"] != session_id]
+
+        self._save_user_data(self.ratings_df, "ratings.jsonl")
+
+    def add_tags(self, session_id: str, tags: List[str]):
+        """Add custom tags to a session."""
+        # Try to find exact session ID first
+        if session_id not in self.sessions_df["session_id"].values:
+            # If not found, try prefix match
+            full_session_id = self.find_session_by_prefix(session_id)
+            if full_session_id:
+                session_id = full_session_id
+            else:
+                logger.error(f"Session {session_id} not found")
+                return
+
+        # Create new tags entry
+        new_tags = {
+            "session_id": session_id,
+            "tags": tags,
+            "timestamp": pd.Timestamp.utcnow()
+        }
+
+        # Update or add tags
+        if not self.tags_df.empty and session_id in self.tags_df["session_id"].values:
+            # Get existing tags
+            existing_tags = self.tags_df.loc[self.tags_df["session_id"] == session_id, "tags"].iloc[0]
+            # Combine with new tags and remove duplicates
+            combined_tags = list(set(existing_tags + tags))
+            # Update the tags
+            mask = self.tags_df["session_id"] == session_id
+            self.tags_df.loc[mask, "tags"] = pd.Series([combined_tags], index=self.tags_df[mask].index)
+            self.tags_df.loc[mask, "timestamp"] = pd.Timestamp.utcnow()
+        else:
+            self.tags_df = pd.concat([self.tags_df, pd.DataFrame([new_tags])], ignore_index=True)
+
+        self._save_user_data(self.tags_df, "tags.jsonl")
+
+    def remove_tags(self, session_id: str, tags_to_remove: List[str]):
+        """Remove specific tags from a session."""
+        # Try to find exact session ID first
+        if session_id not in self.sessions_df["session_id"].values:
+            # If not found, try prefix match
+            full_session_id = self.find_session_by_prefix(session_id)
+            if full_session_id:
+                session_id = full_session_id
+            else:
+                logger.error(f"Session {session_id} not found")
+                return
+
+        # If no tags exist for this session, nothing to remove
+        if self.tags_df.empty or session_id not in self.tags_df["session_id"].values:
+            return
+
+        # Get current tags
+        mask = self.tags_df["session_id"] == session_id
+        current_tags = self.tags_df.loc[mask, "tags"].iloc[0]
+        
+        # Remove specified tags
+        updated_tags = [tag for tag in current_tags if tag not in tags_to_remove]
+        
+        # Update tags entry
+        self.tags_df.loc[mask, "tags"] = pd.Series([updated_tags], index=self.tags_df[mask].index)
+        self.tags_df.loc[mask, "timestamp"] = pd.Timestamp.utcnow()
+        
+        self._save_user_data(self.tags_df, "tags.jsonl")
 
     def get_recommendations(self, min_rating: int = 4) -> pd.DataFrame:
         """Get recommended sessions based on ratings."""
