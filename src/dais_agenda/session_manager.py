@@ -41,10 +41,40 @@ class SessionManager:
         """Load user data (ratings or tags) from JSONL file."""
         file_path = self.user_dir / filename
         if not file_path.exists():
-            return pd.DataFrame()
+            # Initialize with proper dtypes
+            if filename == "ratings.jsonl":
+                return pd.DataFrame({
+                    "session_id": pd.Series(dtype="string"),
+                    "rating": pd.Series(dtype="float64"),
+                    "notes": pd.Series(dtype="string"),
+                    "timestamp": pd.Series(dtype="datetime64[ns, UTC]"),
+                    "interest_level": pd.Series(dtype="float64"),
+                    "interest_notes": pd.Series(dtype="string"),
+                    "interest_timestamp": pd.Series(dtype="datetime64[ns, UTC]")
+                })
+            else:  # tags.jsonl
+                return pd.DataFrame({
+                    "session_id": pd.Series(dtype="string"),
+                    "tags": pd.Series(dtype="object"),  # List of strings
+                    "timestamp": pd.Series(dtype="datetime64[ns, UTC]")
+                })
         
         try:
-            return pd.read_json(file_path, lines=True)
+            df = pd.read_json(file_path, lines=True)
+            # Ensure proper dtypes after loading
+            if filename == "ratings.jsonl":
+                df["session_id"] = df["session_id"].astype("string")
+                df["rating"] = df["rating"].astype("float64")
+                df["notes"] = df["notes"].astype("string")
+                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+                df["interest_level"] = df["interest_level"].astype("float64")
+                df["interest_notes"] = df["interest_notes"].astype("string")
+                df["interest_timestamp"] = pd.to_datetime(df["interest_timestamp"], utc=True)
+            else:  # tags.jsonl
+                df["session_id"] = df["session_id"].astype("string")
+                df["tags"] = df["tags"].astype("object")
+                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+            return df
         except Exception as e:
             logger.error(f"Error loading {file_path}: {e}")
             return pd.DataFrame()
@@ -78,7 +108,7 @@ class SessionManager:
         ]
 
     def get_session_with_user_data(self, session_id: str) -> Optional[Dict]:
-        """Get a session with its user data (ratings and tags)."""
+        """Get a session with its user data (ratings, interest, and tags)."""
         # First try exact match
         session = self.sessions_df[self.sessions_df["session_id"] == session_id]
         
@@ -96,11 +126,15 @@ class SessionManager:
 
         session_data = session.iloc[0].to_dict()
         
-        # Add rating if exists
+        # Add rating and interest if exists
         if not self.ratings_df.empty and session_id in self.ratings_df["session_id"].values:
             rating_data = self.ratings_df[self.ratings_df["session_id"] == session_id].iloc[0]
-            session_data["user_rating"] = rating_data["rating"]
-            session_data["user_notes"] = rating_data["notes"]
+            if pd.notna(rating_data.get("rating")):
+                session_data["user_rating"] = rating_data["rating"]
+                session_data["user_notes"] = rating_data["notes"]
+            if pd.notna(rating_data.get("interest_level")):
+                session_data["user_interest"] = rating_data["interest_level"]
+                session_data["user_interest_notes"] = rating_data["interest_notes"]
         
         # Add tags if exist
         if not self.tags_df.empty and session_id in self.tags_df["session_id"].values:
@@ -133,7 +167,7 @@ class SessionManager:
             "session_id": session_id,
             "rating": rating,
             "notes": notes,
-            "timestamp": datetime.utcnow().isoformat() + "Z"
+            "timestamp": pd.Timestamp.utcnow()
         }
 
         # Update or add rating
@@ -141,6 +175,72 @@ class SessionManager:
             self.ratings_df.loc[self.ratings_df["session_id"] == session_id] = new_rating
         else:
             self.ratings_df = pd.concat([self.ratings_df, pd.DataFrame([new_rating])], ignore_index=True)
+
+        self._save_user_data(self.ratings_df, "ratings.jsonl")
+
+    def add_interest(self, session_id: str, interest_level: int, notes: str = "") -> None:
+        """Add or update interest level for a session."""
+        # First try exact match
+        if session_id not in self.sessions_df["session_id"].values:
+            # If not found, try prefix match
+            full_session_id = self.find_session_by_prefix(session_id)
+            if not full_session_id:
+                raise ValueError(f"Session not found: {session_id}")
+            session_id = full_session_id
+        
+        # If interest level is 0, remove the interest
+        if interest_level == 0:
+            self.remove_interest(session_id)
+            return
+        
+        # Create new interest entry
+        new_interest = {
+            "session_id": session_id,
+            "interest_level": interest_level,
+            "notes": notes,
+            "timestamp": pd.Timestamp.utcnow()
+        }
+
+        # Update or add interest
+        if not self.ratings_df.empty and session_id in self.ratings_df["session_id"].values:
+            self.ratings_df.loc[self.ratings_df["session_id"] == session_id, "interest_level"] = interest_level
+            self.ratings_df.loc[self.ratings_df["session_id"] == session_id, "interest_notes"] = notes
+            self.ratings_df.loc[self.ratings_df["session_id"] == session_id, "interest_timestamp"] = pd.Timestamp.utcnow()
+        else:
+            # Add new row with both rating and interest fields
+            new_row = {
+                "session_id": session_id,
+                "rating": None,
+                "notes": "",
+                "timestamp": None,
+                "interest_level": interest_level,
+                "interest_notes": notes,
+                "interest_timestamp": pd.Timestamp.utcnow()
+            }
+            self.ratings_df = pd.concat([self.ratings_df, pd.DataFrame([new_row])], ignore_index=True)
+
+        self._save_user_data(self.ratings_df, "ratings.jsonl")
+
+    def remove_interest(self, session_id: str) -> None:
+        """Remove interest level for a session."""
+        # First try exact match
+        if session_id not in self.sessions_df["session_id"].values:
+            # If not found, try prefix match
+            full_session_id = self.find_session_by_prefix(session_id)
+            if not full_session_id:
+                raise ValueError(f"Session not found: {session_id}")
+            session_id = full_session_id
+        
+        # If ratings DataFrame is empty, there's nothing to remove
+        if self.ratings_df.empty:
+            return
+        
+        # Remove interest level but keep rating if it exists
+        mask = self.ratings_df["session_id"] == session_id
+        if not self.ratings_df[mask].empty:
+            self.ratings_df.loc[mask, "interest_level"] = None
+            self.ratings_df.loc[mask, "interest_notes"] = None
+            self.ratings_df.loc[mask, "interest_timestamp"] = None
 
         self._save_user_data(self.ratings_df, "ratings.jsonl")
 

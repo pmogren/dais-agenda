@@ -73,10 +73,18 @@ def list(
         schedule = session.get("schedule", {})
         time_str = f"{schedule.get('start_time', '')} - {schedule.get('end_time', '')}"
         
-        # Add rating indicator if available
+        # Add rating and interest indicators if available
         title = session["title"]
+        indicators = []
+        
+        if session_data and "user_interest" in session_data:
+            indicators.append(f"[cyan]({session_data['user_interest']}★ interest)[/cyan]")
+        
         if session_data and "user_rating" in session_data:
-            title = f"{title} [yellow]({session_data['user_rating']}★)[/yellow]"
+            indicators.append(f"[yellow]({session_data['user_rating']}★ rating)[/yellow]")
+        
+        if indicators:
+            title = f"{title} {' '.join(indicators)}"
         
         # Add tags if available
         if session_data and "user_tags" in session_data:
@@ -315,6 +323,27 @@ def update_rating(manager: UserDataManager, session_id: str, rating: int, notes:
     )
     manager.update_rating(user_rating)
     click.echo(f"Updated rating for session {session_id}")
+
+@app.command()
+def interest(
+    session_id: str = typer.Argument(..., help="Session ID to rate interest level"),
+    interest_level: int = typer.Argument(..., help="Interest level (0-5, where 0 removes the interest level)"),
+    notes: str = typer.Option("", help="Optional notes about your interest")
+):
+    """Rate your interest level in a session before attending."""
+    setup_logging()
+    manager = SessionManager()
+    
+    if interest_level < 0 or interest_level > 5:
+        console.print("[red]Interest level must be between 0 and 5 (0 removes the interest level)[/red]")
+        raise typer.Exit(1)
+    
+    if interest_level == 0:
+        manager.remove_interest(session_id)
+        console.print(f"[green]Successfully removed interest level for session {session_id}[/green]")
+    else:
+        manager.add_interest(session_id, interest_level, notes)
+        console.print(f"[green]Successfully set interest level for session {session_id} to {interest_level}[/green]")
 
 if __name__ == "__main__":
     app() 

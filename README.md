@@ -111,6 +111,26 @@ Remove a rating by using a rating of 0:
 python -m dais_agenda.cli rate "10-reasons" 0
 ```
 
+### Rate Interest Level
+
+Rate your interest level in a session before attending (1-5):
+
+```bash
+python -m dais_agenda.cli interest "10-reasons" 5
+```
+
+Add optional notes about your interest:
+
+```bash
+python -m dais_agenda.cli interest "10-reasons" 5 --notes "Looking forward to learning about DLT!"
+```
+
+Remove an interest level by using a level of 0:
+
+```bash
+python -m dais_agenda.cli interest "10-reasons" 0
+```
+
 ### Tag a Session
 
 To add tags to a session:
