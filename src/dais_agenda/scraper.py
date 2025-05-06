@@ -244,22 +244,27 @@ class DaisScraper:
         if not session_type:
             return ""
             
-        # Define standard session types and their variations
+        # Define standard session types and their variations (including uppercase)
         standard_types = {
-            'Breakout': ['breakout', 'session', 'regular session'],
-            'Deep Dive': ['deep dive', 'deep-dive', 'deepdive'],
-            'Evening Event': ['evening', 'evening event', 'evening session'],
-            'Keynote': ['keynote', 'plenary'],
-            'Lightning Talk': ['lightning', 'lightning talk', 'quick talk'],
-            'Meetup': ['meetup', 'meet-up', 'meet up'],
-            'Paid Training': ['paid training', 'training', 'workshop', 'tutorial'],
-            'Special Interest': ['special interest', 'special-interest', 'special']
+            'Breakout': ['breakout', 'session', 'regular session', 'BREAKOUT', 'SESSION', 'REGULAR SESSION'],
+            'Deep Dive': ['deep dive', 'deep-dive', 'deepdive', 'DEEP DIVE', 'DEEP-DIVE', 'DEEPDIVE'],
+            'Evening Event': ['evening', 'evening event', 'evening session', 'EVENING', 'EVENING EVENT', 'EVENING SESSION'],
+            'Keynote': ['keynote', 'plenary', 'KEYNOTE', 'PLENARY'],
+            'Lightning Talk': ['lightning', 'lightning talk', 'quick talk', 'LIGHTNING', 'LIGHTNING TALK', 'QUICK TALK'],
+            'Meetup': ['meetup', 'meet-up', 'meet up', 'MEETUP', 'MEET-UP', 'MEET UP'],
+            'Paid Training': ['paid training', 'training', 'workshop', 'tutorial', 'PAID TRAINING', 'TRAINING', 'WORKSHOP', 'TUTORIAL'],
+            'Special Interest': ['special interest', 'special-interest', 'special', 'SPECIAL INTEREST', 'SPECIAL-INTEREST', 'SPECIAL']
         }
         
-        # Try to match the session type to a known type
+        # First check if the session type exactly matches a standard type (case-insensitive)
         session_type_lower = session_type.lower()
+        for standard_type in standard_types:
+            if session_type_lower == standard_type.lower():
+                return standard_type
+            
+        # Try to match the session type to a known type
         for standard_type, variations in standard_types.items():
-            if session_type_lower in variations or any(var in session_type_lower for var in variations):
+            if session_type_lower in [v.lower() for v in variations] or any(var.lower() in session_type_lower for var in variations):
                 return standard_type
         
         # If no match found, return the original type (if not empty)
@@ -310,6 +315,9 @@ class DaisScraper:
                 "level",
                 "type",
                 "industry",
+                "technologies",
+                "duration",
+                "experience",
                 "areas_of_interest",
                 "speakers",
                 "schedule",
@@ -782,26 +790,36 @@ class DaisScraper:
 
     def extract_metadata_from_dom(self, element: webdriver.remote.webelement.WebElement, selector_prefix: str, field_name: str) -> str:
         """Extract metadata from DOM using various selectors."""
-        # First try to find the table-like structure
+        # First try to find the table-like structure with more specific selectors
         table_selectors = [
-            # Look for table rows with labels
+            # Look for table cells with specific text and classes (case-insensitive)
             f'tr:has(th:contains("{field_name}")) td',
-            f'tr:has(th:contains("{field_name.capitalize()}")) td',
-            # Look for div pairs with labels
-            f'div:has(> div:contains("{field_name}")) > div:last-child',
-            f'div:has(> div:contains("{field_name.capitalize()}")) > div:last-child',
-            # Look for label-value pairs
-            f'div[class*="label"]:contains("{field_name}") + div',
-            f'div[class*="label"]:contains("{field_name.capitalize()}") + div',
-            # Look for specific class patterns
-            f'div[class*="{field_name}-value"]',
-            f'div[class*="{field_name}_value"]',
-            f'div[class*="session-{field_name}"]',
-            f'div[class*="event-{field_name}"]',
-            # Look for specific data attributes
-            f'[data-field="{field_name}"]',
-            f'[data-type="{field_name}"]',
-            f'[data-test="{field_name}"]'
+            f'tr:has(th:contains("{field_name.upper()}")) td',
+            f'tr:has(th:contains("{field_name.lower()}")) td',
+            # Look for table cells with specific classes
+            f'tr th[class*="label"]:contains("{field_name}") + td',
+            f'tr th[class*="header"]:contains("{field_name}") + td',
+            f'tr th[class*="title"]:contains("{field_name}") + td',
+            # Look for table cells with specific data attributes
+            f'tr th[data-field="{field_name}"] + td',
+            f'tr th[data-type="{field_name}"] + td',
+            f'tr th[data-test="{field_name}"] + td',
+            # Look for table cells with specific text content
+            f'tr:has(th:contains("TYPE")) td',
+            f'tr:has(th:contains("TRACK")) td',
+            f'tr:has(th:contains("LEVEL")) td',
+            f'tr:has(th:contains("INDUSTRY")) td',
+            f'tr:has(th:contains("TECHNOLOGIES")) td',
+            f'tr:has(th:contains("DURATION")) td',
+            f'tr:has(th:contains("EXPERIENCE")) td',
+            # Look for table cells with specific classes and text
+            f'tr th.text-base.font-medium.uppercase:contains("{field_name}") + td',
+            f'tr th.text-base.font-medium.uppercase:contains("{field_name.upper()}") + td',
+            f'tr th.text-base.font-medium.uppercase:contains("{field_name.lower()}") + td',
+            # Look for table cells with specific text and classes
+            f'tr:has(th.text-base.font-medium.uppercase:contains("{field_name}")) td.text-base.font-normal.uppercase',
+            f'tr:has(th.text-base.font-medium.uppercase:contains("{field_name.upper()}")) td.text-base.font-normal.uppercase',
+            f'tr:has(th.text-base.font-medium.uppercase:contains("{field_name.lower()}")) td.text-base.font-normal.uppercase'
         ]
         
         for selector in table_selectors:
@@ -811,7 +829,7 @@ class DaisScraper:
                     text = el.text.strip()
                     if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
                         # Clean up text
-                        text = re.sub(r'^(Track|Level|Type|Industry|Areas|Topics):\s*', '', text, flags=re.IGNORECASE)
+                        text = re.sub(r'^(Track|Level|Type|Industry|Areas|Topics|Technologies|Duration|Experience):\s*', '', text, flags=re.IGNORECASE)
                         text = re.sub(r'menu_link_content--.*$', '', text).strip()
                         if text:
                             # Clean session type if this is the type field
@@ -860,7 +878,7 @@ class DaisScraper:
                     text = el.text.strip()
                     if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
                         # Clean up text
-                        text = re.sub(r'^(Track|Level|Type|Industry|Areas|Topics):\s*', '', text, flags=re.IGNORECASE)
+                        text = re.sub(r'^(Track|Level|Type|Industry|Areas|Topics|Technologies|Duration|Experience):\s*', '', text, flags=re.IGNORECASE)
                         text = re.sub(r'menu_link_content--.*$', '', text).strip()
                         if text:
                             # Clean session type if this is the type field
@@ -875,31 +893,71 @@ class DaisScraper:
             # Get all text content
             text_content = element.text
             
-            # Define patterns for each field type
+            # Define patterns for each field type (including uppercase variations)
             patterns = {
                 'track': [
                     r'Track:\s*([^\n]+)',
+                    r'TRACK:\s*([^\n]+)',
                     r'Session Track:\s*([^\n]+)',
-                    r'Event Track:\s*([^\n]+)',
-                    r'(?:Data Engineering|Data Science|Machine Learning|AI|Analytics|Business|Technical|Strategy)'
+                    r'SESSION TRACK:\s*([^\n]+)',
+                    r'(?:Data Engineering|Data Science|Machine Learning|AI|Analytics|Business|Technical|Strategy)',
+                    r'(?:DATA ENGINEERING|DATA SCIENCE|MACHINE LEARNING|AI|ANALYTICS|BUSINESS|TECHNICAL|STRATEGY)'
                 ],
                 'level': [
                     r'Level:\s*([^\n]+)',
+                    r'LEVEL:\s*([^\n]+)',
                     r'Difficulty:\s*([^\n]+)',
+                    r'DIFFICULTY:\s*([^\n]+)',
                     r'Experience Level:\s*([^\n]+)',
-                    r'(?:Beginner|Intermediate|Advanced|Expert)'
+                    r'EXPERIENCE LEVEL:\s*([^\n]+)',
+                    r'Skill Level:\s*([^\n]+)',
+                    r'SKILL LEVEL:\s*([^\n]+)',
+                    r'(?:Beginner|Intermediate|Advanced|Expert)',
+                    r'(?:BEGINNER|INTERMEDIATE|ADVANCED|EXPERT)'
                 ],
                 'type': [
                     r'Type:\s*([^\n]+)',
+                    r'TYPE:\s*([^\n]+)',
                     r'Session Type:\s*([^\n]+)',
+                    r'SESSION TYPE:\s*([^\n]+)',
                     r'Format:\s*([^\n]+)',
-                    r'(?:Breakout|Deep Dive|Evening Event|Keynote|Lightning Talk|Meetup|Paid Training|Special Interest)'
+                    r'FORMAT:\s*([^\n]+)',
+                    r'(?:Breakout|Deep Dive|Evening Event|Keynote|Lightning Talk|Meetup|Paid Training|Special Interest)',
+                    r'(?:BREAKOUT|DEEP DIVE|EVENING EVENT|KEYNOTE|LIGHTNING TALK|MEETUP|PAID TRAINING|SPECIAL INTEREST)'
                 ],
                 'industry': [
                     r'Industry:\s*([^\n]+)',
+                    r'INDUSTRY:\s*([^\n]+)',
                     r'Sector:\s*([^\n]+)',
+                    r'SECTOR:\s*([^\n]+)',
                     r'Vertical:\s*([^\n]+)',
-                    r'(?:Financial Services|Healthcare|Retail|Manufacturing|Technology|Education|Government)'
+                    r'VERTICAL:\s*([^\n]+)',
+                    r'(?:Financial Services|Healthcare|Retail|Manufacturing|Technology|Education|Government|Professional Services)',
+                    r'(?:FINANCIAL SERVICES|HEALTHCARE|RETAIL|MANUFACTURING|TECHNOLOGY|EDUCATION|GOVERNMENT|PROFESSIONAL SERVICES)'
+                ],
+                'technologies': [
+                    r'Technologies:\s*([^\n]+)',
+                    r'TECHNOLOGIES:\s*([^\n]+)',
+                    r'Tech Stack:\s*([^\n]+)',
+                    r'TECH STACK:\s*([^\n]+)',
+                    r'(?:Apache Spark|Delta Lake|DLT|SQL|Python|R|Scala|Java|JavaScript|TypeScript)',
+                    r'(?:APACHE SPARK|DELTA LAKE|DLT|SQL|PYTHON|R|SCALA|JAVA|JAVASCRIPT|TYPESCRIPT)'
+                ],
+                'duration': [
+                    r'Duration:\s*([^\n]+)',
+                    r'DURATION:\s*([^\n]+)',
+                    r'Length:\s*([^\n]+)',
+                    r'LENGTH:\s*([^\n]+)',
+                    r'(\d+)\s*(?:min|minute|minutes)',
+                    r'(\d+)\s*(?:MIN|MINUTE|MINUTES)'
+                ],
+                'experience': [
+                    r'Experience:\s*([^\n]+)',
+                    r'EXPERIENCE:\s*([^\n]+)',
+                    r'Format:\s*([^\n]+)',
+                    r'FORMAT:\s*([^\n]+)',
+                    r'(?:In Person|Virtual|Hybrid|Online)',
+                    r'(?:IN PERSON|VIRTUAL|HYBRID|ONLINE)'
                 ]
             }
             
@@ -910,15 +968,13 @@ class DaisScraper:
                     if match:
                         text = match.group(1) if len(match.groups()) > 0 else match.group(0)
                         text = text.strip()
-                        if text and not text.startswith(('IMAGE COMING SOON', 'RETURN TO ALL')):
-                            # Clean up text
-                            text = re.sub(r'menu_link_content--.*$', '', text).strip()
+                        if text:
                             # Clean session type if this is the type field
                             if field_name == 'type':
                                 text = self.clean_session_type(text)
                             return text
         except Exception as e:
-            logger.debug(f"Error extracting {field_name} from text content: {e}")
+            logger.debug(f"Error inferring {field_name} from content: {e}")
         
         return ""
 
@@ -966,6 +1022,9 @@ class DaisScraper:
                         "level": "",
                         "type": "",
                         "industry": "",
+                        "technologies": [],
+                        "duration": "",
+                        "experience": "",
                         "areas_of_interest": [],
                         "speakers": [],
                         "schedule": {
@@ -1010,20 +1069,70 @@ class DaisScraper:
                         except Exception as e:
                             logger.debug(f"Error extracting description with selector {selector}: {e}")
                     
-                    # Extract metadata fields using common selectors
-                    for field in ['track', 'level', 'type', 'industry']:
-                        # First try to get from Next.js data
-                        if nextjs_data and "metadata" in nextjs_data:
-                            value = nextjs_data["metadata"].get(field, "")
-                            if value:
-                                session_data[field] = value
-                                continue
+                    # Extract metadata from the table structure
+                    try:
+                        # Look for the metadata table
+                        logger.info("Looking for metadata table...")
+                        table_rows = element.find_elements(By.CSS_SELECTOR, 'tr')
+                        logger.info(f"Found {len(table_rows)} table rows")
                         
-                        # If not found in Next.js data, try DOM selectors
-                        value = self.extract_metadata_from_dom(element, 'div', field)
-                        if not value:
-                            value = self.extract_metadata_from_dom(element, 'span', field)
-                        session_data[field] = value
+                        for row in table_rows:
+                            try:
+                                # Get the header and value cells
+                                header = row.find_element(By.TAG_NAME, 'th').text.strip().upper()
+                                value = row.find_element(By.TAG_NAME, 'td').text.strip()
+                                logger.info(f"Found metadata: {header} = {value}")
+                                
+                                # Map the header to the appropriate field
+                                if header == 'EXPERIENCE':
+                                    session_data['experience'] = value
+                                elif header == 'TYPE':
+                                    session_data['type'] = value
+                                elif header == 'TRACK':
+                                    session_data['track'] = value
+                                elif header == 'INDUSTRY':
+                                    session_data['industry'] = value
+                                elif header == 'TECHNOLOGIES':
+                                    # Split technologies by comma and clean each one
+                                    session_data['technologies'] = [tech.strip() for tech in value.split(',') if tech.strip()]
+                                elif header in ['SKILL LEVEL', 'LEVEL']:
+                                    session_data['level'] = value
+                                elif header == 'DURATION':
+                                    session_data['duration'] = value
+                            except Exception as e:
+                                logger.debug(f"Error processing table row: {e}")
+                                continue
+                    except Exception as e:
+                        logger.debug(f"Error extracting metadata table: {e}")
+                    
+                    # If we didn't find the metadata in the table, try other methods
+                    if not any([session_data['track'], session_data['level'], session_data['type'], 
+                               session_data['industry'], session_data['technologies'], 
+                               session_data['duration'], session_data['experience']]):
+                        logger.info("No metadata found in table, trying other methods...")
+                        # Extract metadata fields using common selectors
+                        for field in ['track', 'level', 'type', 'industry', 'technologies', 'duration', 'experience']:
+                            # First try to get from Next.js data
+                            if nextjs_data and "metadata" in nextjs_data:
+                                value = nextjs_data["metadata"].get(field, "")
+                                if value:
+                                    if field == 'technologies':
+                                        # Split technologies by comma and clean each one
+                                        session_data[field] = [tech.strip() for tech in value.split(',') if tech.strip()]
+                                    else:
+                                        session_data[field] = value
+                                    continue
+                            
+                            # If not found in Next.js data, try DOM selectors
+                            value = self.extract_metadata_from_dom(element, 'div', field)
+                            if not value:
+                                value = self.extract_metadata_from_dom(element, 'span', field)
+                            
+                            if field == 'technologies':
+                                # Split technologies by comma and clean each one
+                                session_data[field] = [tech.strip() for tech in value.split(',') if tech.strip()]
+                            else:
+                                session_data[field] = value
                     
                     # Extract areas of interest
                     # First try to get from Next.js data
