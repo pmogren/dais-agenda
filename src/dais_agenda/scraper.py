@@ -302,6 +302,14 @@ class DaisScraper:
                         # If still not found, default to "Breakout" as it's the most common type
                         session["type"] = session_type or "Breakout"
                     
+                    # Sort arrays in the session data
+                    if "areas_of_interest" in session:
+                        session["areas_of_interest"] = sorted(session["areas_of_interest"])
+                    if "speakers" in session:
+                        session["speakers"] = sorted(session["speakers"])
+                    if "technologies" in session:
+                        session["technologies"] = sorted(session["technologies"])
+                    
                     unique_sessions[session_id] = session
             
             # Convert back to list and sort by session_id

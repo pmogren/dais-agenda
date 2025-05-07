@@ -1,0 +1,3 @@
+{"session_id": "session1", "rating": 5, "notes": "Great session on Delta Live Tables!", "tags": ["data-engineering", "delta-lake", "must-see"], "user_id": "dba678cb-d947-4434-877a-d04833c54c7b"}
+{"session_id": "session2", "rating": 4, "notes": "Good overview of streaming capabilities", "tags": ["streaming", "data-engineering"], "user_id": "a5329e0b-385e-47b0-b3b0-4e9e60276b0b"}
+{"session_id": "session3", "rating": 3, "notes": "Interesting case study", "tags": ["case-study", "governance"], "user_id": "b2462a39-ae09-4317-a44e-83a94a436676"}
