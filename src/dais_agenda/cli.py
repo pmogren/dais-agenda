@@ -216,13 +216,17 @@ def recommend(
     # Display table
     console.print(Panel.fit(table, title="Recommended Sessions"))
 
+DEFAULT_DATA_DIR = "data"
 @app.command()
 def scrape(
     preview: bool = typer.Option(False, "--preview", help="Run in preview mode"),
     preview_count: int = typer.Option(3, "--preview-count", help="Number of sessions to process in preview mode"),
     preview_page_count: int = typer.Option(2, "--preview-page-count", help="Number of pages to process in preview mode"),
-    data_dir: str = typer.Option("data", "--data-dir", help="Custom data directory")
+    data_dir: str = typer.Option(DEFAULT_DATA_DIR, "--data-dir", help="Custom data directory")
 ):
+    if preview and data_dir == DEFAULT_DATA_DIR:
+        data_dir = f"{DEFAULT_DATA_DIR}_preview_{datetime.now().strftime('%Y-%m-%dT%H-%M-%S')}"
+        
     """Scrape session data from the Databricks website."""
     from .scraper import DaisScraper
     

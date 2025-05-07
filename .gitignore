@@ -36,6 +36,7 @@ ENV/
 
 # Project specific
 #data/
+data_preview_*
 #*.jsonl
 *.log
 *.sqlite
