@@ -394,15 +394,14 @@ class DaisScraper:
             # Store session URLs to visit
             session_urls = set()
             
-            # Keep track of current page and total pages
+            # Keep track of current page
             current_page = 1
-            total_pages = 5  # We know there are 5 pages
             
-            # Process each page
-            while current_page <= total_pages:
+            # Process pages until no more sessions are found
+            while True:
                 # Construct the URL with the page parameter
                 page_url = f"{self.base_url}?page={current_page}"
-                logger.info(f"Processing page {current_page} of {total_pages}")
+                logger.info(f"Processing page {current_page}")
                 
                 # Navigate to the page
                 self.driver.get(page_url)
@@ -414,16 +413,31 @@ class DaisScraper:
                     'a[href*="/session/"]'
                 )
                 
+                # If no session links found, we've reached the end
+                if not session_links:
+                    logger.info(f"No more sessions found on page {current_page}")
+                    break
+                
                 # Filter out "SEE DETAILS" links and collect URLs
+                page_urls = set()
                 for link in session_links:
                     if "SEE DETAILS" not in link.text:
                         href = link.get_attribute("href")
                         if href:
-                            session_urls.add(href)
+                            page_urls.add(href)
+                
+                # If no new URLs found on this page, we've reached the end
+                if not page_urls:
+                    logger.info(f"No new session URLs found on page {current_page}")
+                    break
+                
+                # Add new URLs to our collection
+                session_urls.update(page_urls)
+                logger.info(f"Found {len(page_urls)} new session URLs on page {current_page}")
                 
                 current_page += 1
             
-            logger.info(f"Found {len(session_urls)} unique session URLs")
+            logger.info(f"Found {len(session_urls)} unique session URLs across {current_page - 1} pages")
             
             # Convert to sorted list for consistent ordering
             session_urls = sorted(list(session_urls))
