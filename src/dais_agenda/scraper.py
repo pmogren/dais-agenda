@@ -394,18 +394,34 @@ class DaisScraper:
             # Store session URLs to visit
             session_urls = set()
             
-            # Find session links by looking for links that contain "/session/" in their href
-            session_links = self.driver.find_elements(
-                By.CSS_SELECTOR,
-                'a[href*="/session/"]'
-            )
+            # Keep track of current page and total pages
+            current_page = 1
+            total_pages = 5  # We know there are 5 pages
             
-            # Filter out "SEE DETAILS" links and collect URLs
-            for link in session_links:
-                if "SEE DETAILS" not in link.text:
-                    href = link.get_attribute("href")
-                    if href:
-                        session_urls.add(href)
+            # Process each page
+            while current_page <= total_pages:
+                # Construct the URL with the page parameter
+                page_url = f"{self.base_url}?page={current_page}"
+                logger.info(f"Processing page {current_page} of {total_pages}")
+                
+                # Navigate to the page
+                self.driver.get(page_url)
+                time.sleep(2)  # Wait for page to load
+                
+                # Find session links by looking for links that contain "/session/" in their href
+                session_links = self.driver.find_elements(
+                    By.CSS_SELECTOR,
+                    'a[href*="/session/"]'
+                )
+                
+                # Filter out "SEE DETAILS" links and collect URLs
+                for link in session_links:
+                    if "SEE DETAILS" not in link.text:
+                        href = link.get_attribute("href")
+                        if href:
+                            session_urls.add(href)
+                
+                current_page += 1
             
             logger.info(f"Found {len(session_urls)} unique session URLs")
             
