@@ -17,11 +17,21 @@ app = typer.Typer()
 console = Console()
 logger = logging.getLogger(__name__)
 
-def setup_logging():
+def setup_logging(debug: bool = False):
+    """Set up logging configuration."""
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG if debug else logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
+
+@app.callback()
+def callback(
+    debug: bool = typer.Option(False, "--debug", help="Enable debug logging")
+):
+    """
+    A tool to help plan attendance to the Databricks Data + AI Summit.
+    """
+    setup_logging(debug)
 
 @app.command()
 def list(
@@ -32,7 +42,6 @@ def list(
     show_details: bool = typer.Option(False, "--details", help="Show detailed session information")
 ):
     """List sessions with optional filtering."""
-    setup_logging()
     manager = SessionManager()
     
     # Get filtered sessions
@@ -120,7 +129,6 @@ def rate(
     notes: str = typer.Option("", help="Optional notes about the session")
 ):
     """Rate a session or remove a rating."""
-    setup_logging()
     manager = SessionManager()
     
     if rating < 0 or rating > 5:
@@ -140,7 +148,6 @@ def tag(
     tags: str = typer.Argument(..., help="Space-separated list of tags to add (prefix with ^ to remove)")
 ):
     """Add or remove tags from a session."""
-    setup_logging()
     manager = SessionManager()
     
     # Split tags string into list and separate add/remove tags
@@ -162,7 +169,6 @@ def recommend(
     limit: int = typer.Option(10, help="Maximum number of recommendations to show")
 ):
     """Get personalized session recommendations."""
-    setup_logging()
     manager = SessionManager()
     
     recommendations = manager.get_recommendations(min_rating)
@@ -211,18 +217,28 @@ def recommend(
     console.print(Panel.fit(table, title="Recommended Sessions"))
 
 @app.command()
-def scrape():
+def scrape(
+    preview: bool = typer.Option(False, "--preview", help="Run in preview mode to process only a few sessions"),
+    preview_count: int = typer.Option(3, "--preview-count", help="Number of sessions to process in preview mode"),
+    data_dir: str = typer.Option("data", "--data-dir", help="Directory to store session data")
+):
     """Scrape the latest session data from the Databricks website."""
-    setup_logging()
     from .scraper import DaisScraper
     
-    scraper = DaisScraper()
-    sessions = scraper.fetch_sessions()
-    if sessions:
-        scraper.save_sessions(sessions)
-        console.print(f"[green]Successfully saved {len(sessions)} sessions[/green]")
-    else:
-        console.print("[red]No sessions were found or saved[/red]")
+    with console.status("[bold green]Setting up scraper...") as status:
+        scraper = DaisScraper(data_dir=data_dir, preview_mode=preview, preview_count=preview_count)
+        
+        status.update("[bold green]Fetching sessions...")
+        sessions = scraper.fetch_sessions()
+        
+        if sessions:
+            status.update("[bold green]Saving sessions...")
+            scraper.save_sessions(sessions)
+            console.print(f"[green]Successfully saved {len(sessions)} sessions to {data_dir}/sessions/[/green]")
+            if preview:
+                console.print("[yellow]Note: Running in preview mode - only processed a subset of sessions[/yellow]")
+        else:
+            console.print("[red]No sessions were found or saved[/red]")
 
 @click.group()
 @click.option('--data-dir', type=click.Path(), default='data/user_data',
@@ -333,7 +349,6 @@ def interest(
     notes: str = typer.Option("", help="Optional notes about your interest")
 ):
     """Rate your interest level in a session before attending."""
-    setup_logging()
     manager = SessionManager()
     
     if interest_level < 0 or interest_level > 5:
@@ -346,6 +361,42 @@ def interest(
     else:
         manager.add_interest(session_id, interest_level, notes)
         console.print(f"[green]Successfully set interest level for session {session_id} to {interest_level}[/green]")
+
+@app.command()
+def tracks():
+    """List all available tracks."""
+    manager = SessionManager()
+    
+    # Get unique tracks from the sessions DataFrame
+    tracks = sorted(manager.sessions_df["track"].unique())
+    
+    # Filter out empty tracks
+    tracks = [track for track in tracks if track]
+    
+    if not tracks:
+        console.print("[yellow]No tracks found.[/yellow]")
+        return
+    
+    # Create table
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Track Name")
+    table.add_column("Example Usage")
+    
+    # Add rows
+    for idx, track in enumerate(tracks):
+        # Format the example usage
+        example = f"dais-agenda list --track '{track}'"
+        
+        # Apply alternating row style
+        style = "dim" if idx % 2 == 0 else None
+        row = [
+            f"[{style}]{track}[/]" if style else track,
+            f"[{style}]{example}[/]" if style else example
+        ]
+        table.add_row(*row)
+    
+    # Display table
+    console.print(table)
 
 if __name__ == "__main__":
     app() 

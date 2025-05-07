@@ -43,23 +43,34 @@ dais-agenda/
 
 ## Usage
 
-The tool provides a command-line interface for managing session data. Here are the available commands:
+The tool provides a command-line interface for managing session data. All commands support the `--debug` flag to enable debug logging:
+
+```bash
+python -m dais_agenda --debug <command>
+```
+
+Here are the available commands:
 
 ### Scraping Sessions
 
 To scrape the latest session data from the Databricks website:
 ```bash
-python -m dais_agenda.scraper
+python -m dais_agenda scrape
 ```
 
 You can also run in preview mode to process only a few sessions (useful for testing):
 ```bash
-python -m dais_agenda.scraper --preview
+python -m dais_agenda scrape --preview
 ```
 
 Or specify a custom number of sessions to process in preview mode:
 ```bash
-python -m dais_agenda.scraper --preview --preview-count 5
+python -m dais_agenda scrape --preview --preview-count 5
+```
+
+You can also specify a custom data directory:
+```bash
+python -m dais_agenda scrape --data-dir custom_data
 ```
 
 This will:
@@ -70,19 +81,24 @@ This will:
   - Track, level, and type
   - Industry and category information
   - Speaker details
-  - Schedule information (day, room, start/end times in both local and PST)
+  - Schedule information (day, room, start/end times)
   - Duration and path information
 
 ### Managing Sessions
 
 To list all sessions:
 ```bash
-python -m dais_agenda.cli list
+python -m dais_agenda list
 ```
 
-To list sessions by track:
+To list all available tracks:
 ```bash
-python -m dais_agenda.cli list --track "Data Engineering and Streaming"
+python -m dais_agenda tracks
+```
+
+To list sessions by track (use one of the tracks shown by the tracks command):
+```bash
+python -m dais_agenda list --track "DATA STRATEGY"
 ```
 
 ### Rate a Session
@@ -90,25 +106,25 @@ python -m dais_agenda.cli list --track "Data Engineering and Streaming"
 Rate a session with a score from 1-5:
 
 ```bash
-python -m dais_agenda.cli rate "10-reasons-use-databricks-delta-live-tables-your-next-data-processing" 5
+python -m dais_agenda rate "10-reasons-use-databricks-delta-live-tables-your-next-data-processing" 5
 ```
 
 You can also use a prefix of the session ID:
 
 ```bash
-python -m dais_agenda.cli rate "10-reasons" 5
+python -m dais_agenda rate "10-reasons" 5
 ```
 
 Add optional notes to your rating:
 
 ```bash
-python -m dais_agenda.cli rate "10-reasons" 5 --notes "Great session on Delta Live Tables!"
+python -m dais_agenda rate "10-reasons" 5 --notes "Great session on Delta Live Tables!"
 ```
 
 Remove a rating by using a rating of 0:
 
 ```bash
-python -m dais_agenda.cli rate "10-reasons" 0
+python -m dais_agenda rate "10-reasons" 0
 ```
 
 ### Rate Interest Level
@@ -116,46 +132,46 @@ python -m dais_agenda.cli rate "10-reasons" 0
 Rate your interest level in a session before attending (1-5):
 
 ```bash
-python -m dais_agenda.cli interest "10-reasons" 5
+python -m dais_agenda interest "10-reasons" 5
 ```
 
 Add optional notes about your interest:
 
 ```bash
-python -m dais_agenda.cli interest "10-reasons" 5 --notes "Looking forward to learning about DLT!"
+python -m dais_agenda interest "10-reasons" 5 --notes "Looking forward to learning about DLT!"
 ```
 
 Remove an interest level by using a level of 0:
 
 ```bash
-python -m dais_agenda.cli interest "10-reasons" 0
+python -m dais_agenda interest "10-reasons" 0
 ```
 
 ### Tag a Session
 
 To add tags to a session:
 ```bash
-python -m dais_agenda.cli tag "10-reasons-use-databricks-delta-live-tables-your-next-data-processing" "spark streaming etl"
+python -m dais_agenda tag "10-reasons-use-databricks-delta-live-tables-your-next-data-processing" "spark streaming etl"
 ```
 
 You can also use a prefix of the session ID:
 ```bash
-python -m dais_agenda.cli tag "10-reasons" "spark streaming etl"
+python -m dais_agenda tag "10-reasons" "spark streaming etl"
 ```
 
 To remove tags, prefix them with ^:
 ```bash
-python -m dais_agenda.cli tag "10-reasons" "^spark ^streaming"
+python -m dais_agenda tag "10-reasons" "^spark ^streaming"
 ```
 
 You can add and remove tags in the same command:
 ```bash
-python -m dais_agenda.cli tag "10-reasons" "spark streaming ^etl"
+python -m dais_agenda tag "10-reasons" "spark streaming ^etl"
 ```
 
 To get recommendations based on your ratings and tags:
 ```bash
-python -m dais_agenda.cli recommend
+python -m dais_agenda recommend
 ```
 
 ## Development

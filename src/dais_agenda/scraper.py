@@ -41,7 +41,7 @@ class DaisScraper:
             
             service = Service(ChromeDriverManager().install())
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
-            logger.info("Successfully set up Chrome WebDriver")
+            logger.debug("Successfully set up Chrome WebDriver")
         except Exception as e:
             logger.error(f"Error setting up Chrome WebDriver: {e}")
             raise
@@ -415,7 +415,7 @@ class DaisScraper:
                 
                 # If no session links found, we've reached the end
                 if not session_links:
-                    logger.info(f"No more sessions found on page {current_page}")
+                    logger.debug(f"No more sessions found on page {current_page}")
                     break
                 
                 # Filter out "SEE DETAILS" links and collect URLs
@@ -428,12 +428,12 @@ class DaisScraper:
                 
                 # If no new URLs found on this page, we've reached the end
                 if not page_urls:
-                    logger.info(f"No new session URLs found on page {current_page}")
+                    logger.debug(f"No new session URLs found on page {current_page}")
                     break
                 
                 # Add new URLs to our collection
                 session_urls.update(page_urls)
-                logger.info(f"Found {len(page_urls)} new session URLs on page {current_page}")
+                logger.debug(f"Found {len(page_urls)} new session URLs on page {current_page}")
                 
                 current_page += 1
             
@@ -450,7 +450,7 @@ class DaisScraper:
             # Process each session URL
             for i, url in enumerate(session_urls):
                 try:
-                    logger.info(f"Processing session {i+1} of {len(session_urls)}: {url}")
+                    logger.debug(f"Processing session {i+1} of {len(session_urls)}: {url}")
                     
                     # Navigate directly to the session URL
                     self.driver.get(url)
@@ -459,11 +459,11 @@ class DaisScraper:
                     # Try to find Next.js data structure first
                     nextjs_data = self.extract_nextjs_data()
                     if nextjs_data:
-                        logger.info("Found Next.js data structure")
+                        logger.debug("Found Next.js data structure")
                         if "props" in nextjs_data and "pageProps" in nextjs_data["props"]:
                             page_props = nextjs_data["props"]["pageProps"]
                             if "agenda" in page_props:
-                                logger.info("Found agenda data in pageProps")
+                                logger.debug("Found agenda data in pageProps")
                                 new_sessions = self.extract_session_data(page_props["agenda"], url)
                                 if new_sessions:
                                     sessions.extend(new_sessions)
@@ -472,7 +472,7 @@ class DaisScraper:
                     # If no sessions found in Next.js data, try DOM extraction
                     dom_data = self.extract_session_data_from_dom(url)
                     if dom_data:
-                        logger.info("Found session data in DOM")
+                        logger.debug("Found session data in DOM")
                         sessions.extend(dom_data)
                     
                 except Exception as e:
@@ -533,7 +533,7 @@ class DaisScraper:
             if result:
                 try:
                     data = json.loads(result)
-                    logger.info("Found data in JavaScript variables")
+                    logger.debug("Found data in JavaScript variables")
                     
                     # Try to find session data in the structure
                     if isinstance(data, dict):
@@ -957,16 +957,16 @@ class DaisScraper:
                     # Extract metadata from the table structure
                     try:
                         # Look for the metadata table
-                        logger.info("Looking for metadata table...")
+                        logger.debug("Looking for metadata table...")
                         table_rows = element.find_elements(By.CSS_SELECTOR, 'tr')
-                        logger.info(f"Found {len(table_rows)} table rows")
+                        logger.debug(f"Found {len(table_rows)} table rows")
                         
                         for row in table_rows:
                             try:
                                 # Get the header and value cells
                                 header = row.find_element(By.TAG_NAME, 'th').text.strip().upper()
                                 value = row.find_element(By.TAG_NAME, 'td').text.strip()
-                                logger.info(f"Found metadata: {header} = {value}")
+                                logger.debug(f"Found metadata: {header} = {value}")
                                 
                                 # Map the header to the appropriate field
                                 if header == 'EXPERIENCE':
