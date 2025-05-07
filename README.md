@@ -58,19 +58,25 @@ To scrape the latest session data from the Databricks website:
 python -m dais_agenda scrape
 ```
 
-You can also run in preview mode to process only a few sessions (useful for testing):
+Options:
+- `--preview`: Run in preview mode (process limited number of sessions and pages)
+- `--preview-page-count N`: Number of pages to process in preview mode (default: 2)
+- `--preview-count N`: Number of sessions to process in preview mode (limited by the number retrieved per --preview-page-count) (default: 3)
+- `--data-dir DIR`: Custom data directory (default: ./data)
+
+Example:
 ```bash
+# Run in preview mode with default settings (3 sessions, 2 pages)
 python -m dais_agenda scrape --preview
-```
 
-Or specify a custom number of sessions to process in preview mode:
-```bash
+# Run in preview mode with custom session count
 python -m dais_agenda scrape --preview --preview-count 5
-```
 
-You can also specify a custom data directory:
-```bash
-python -m dais_agenda scrape --data-dir custom_data
+# Run in preview mode with custom page count
+python -m dais_agenda scrape --preview --preview-page-count 3
+
+# Run with custom data directory
+python -m dais_agenda scrape --data-dir ./custom_data
 ```
 
 This will:

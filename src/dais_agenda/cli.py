@@ -218,15 +218,21 @@ def recommend(
 
 @app.command()
 def scrape(
-    preview: bool = typer.Option(False, "--preview", help="Run in preview mode to process only a few sessions"),
+    preview: bool = typer.Option(False, "--preview", help="Run in preview mode"),
     preview_count: int = typer.Option(3, "--preview-count", help="Number of sessions to process in preview mode"),
-    data_dir: str = typer.Option("data", "--data-dir", help="Directory to store session data")
+    preview_page_count: int = typer.Option(2, "--preview-page-count", help="Number of pages to process in preview mode"),
+    data_dir: str = typer.Option("data", "--data-dir", help="Custom data directory")
 ):
-    """Scrape the latest session data from the Databricks website."""
+    """Scrape session data from the Databricks website."""
     from .scraper import DaisScraper
     
     with console.status("[bold green]Setting up scraper...") as status:
-        scraper = DaisScraper(data_dir=data_dir, preview_mode=preview, preview_count=preview_count)
+        scraper = DaisScraper(
+            data_dir=data_dir,
+            preview_mode=preview,
+            preview_count=preview_count,
+            preview_page_count=preview_page_count
+        )
         
         status.update("[bold green]Fetching sessions...")
         sessions = scraper.fetch_sessions()

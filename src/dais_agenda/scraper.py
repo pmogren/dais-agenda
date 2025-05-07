@@ -19,7 +19,7 @@ import ast
 logger = logging.getLogger(__name__)
 
 class DaisScraper:
-    def __init__(self, data_dir: str = "data", preview_mode: bool = False, preview_count: int = 3):
+    def __init__(self, data_dir: str = "data", preview_mode: bool = False, preview_count: int = 3, preview_page_count: int = 2):
         self.data_dir = Path(data_dir)
         self.sessions_dir = self.data_dir / "sessions"
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
@@ -27,6 +27,7 @@ class DaisScraper:
         self.driver = None
         self.preview_mode = preview_mode
         self.preview_count = preview_count
+        self.preview_page_count = preview_page_count
 
     def setup_driver(self):
         """Set up Chrome WebDriver with appropriate options."""
@@ -399,6 +400,11 @@ class DaisScraper:
             
             # Process pages until no more sessions are found
             while True:
+                # In preview mode, only process specified number of pages
+                if self.preview_mode and current_page > self.preview_page_count:
+                    logger.info(f"Preview mode: Reached {self.preview_page_count} page limit")
+                    break
+                
                 # Construct the URL with the page parameter
                 page_url = f"{self.base_url}?page={current_page}"
                 logger.info(f"Processing page {current_page}")
