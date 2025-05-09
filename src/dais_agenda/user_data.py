@@ -7,7 +7,7 @@ import uuid
 @dataclass
 class UserRating:
     session_id: str
-    rating: int  # 1-5 scale
+    rating: float  # 1-5 scale
     notes: Optional[str] = None
     tags: List[str] = field(default_factory=list)
     user_id: str = field(default_factory=lambda: str(uuid.uuid4()))

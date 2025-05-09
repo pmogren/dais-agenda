@@ -152,7 +152,7 @@ class SessionManager:
             logger.warning(f"Multiple sessions found with prefix '{prefix}': {', '.join(matching_sessions['session_id'])}")
         return None
 
-    def add_rating(self, session_id: str, rating: int, notes: str = "") -> str:
+    def add_rating(self, session_id: str, rating: float, notes: str = "") -> str:
         """Add or update a rating for a session."""
         # First try exact match
         if session_id not in self.sessions_df["session_id"].values:
@@ -179,7 +179,7 @@ class SessionManager:
         self._save_user_data(self.ratings_df, "ratings.jsonl")
         return session_id
 
-    def add_interest(self, session_id: str, interest_level: int, notes: str = "") -> str:
+    def add_interest(self, session_id: str, interest_level: float, notes: str = "") -> str:
         """Add or update interest level for a session."""
         # First try exact match
         if session_id not in self.sessions_df["session_id"].values:
@@ -330,7 +330,7 @@ class SessionManager:
         
         self._save_user_data(self.tags_df, "tags.jsonl")
 
-    def get_recommendations(self, min_rating: int = 4) -> pd.DataFrame:
+    def get_recommendations(self, min_rating: float = 4) -> pd.DataFrame:
         """Get recommended sessions based on ratings."""
         if self.ratings_df.empty:
             return pd.DataFrame()

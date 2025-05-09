@@ -87,10 +87,10 @@ def list(
         indicators = []
         
         if session_data and "user_interest" in session_data:
-            indicators.append(f"[cyan]({int(session_data['user_interest'])}★ interest)[/cyan]")
+            indicators.append(f"[cyan]({float(session_data['user_interest'])}★ interest)[/cyan]")
         
         if session_data and "user_rating" in session_data:
-            indicators.append(f"[yellow]({int(session_data['user_rating'])}★ rating)[/yellow]")
+            indicators.append(f"[yellow]({float(session_data['user_rating'])}★ rating)[/yellow]")
         
         if indicators:
             title = f"{title} {' '.join(indicators)}"
@@ -125,7 +125,7 @@ def list(
 @app.command()
 def rate(
     session_id: str = typer.Argument(..., help="Session ID to rate (use 0 to remove rating)"),
-    rating: int = typer.Argument(..., help="Rating (0-5, where 0 removes the rating)"),
+    rating: float = typer.Argument(..., help="Rating (0-5, where 0 removes the rating)"),
     notes: str = typer.Option("", help="Optional notes about the session")
 ):
     """Rate a session or remove a rating."""
@@ -165,7 +165,7 @@ def tag(
 
 @app.command()
 def recommend(
-    min_rating: int = typer.Option(4, help="Minimum rating to consider for recommendations"),
+    min_rating: float = typer.Option(3.5, help="Minimum rating to consider for recommendations"),
     limit: int = typer.Option(10, help="Maximum number of recommendations to show")
 ):
     """Get personalized session recommendations."""
@@ -260,11 +260,11 @@ def cli(ctx, data_dir):
 
 @cli.command()
 @click.argument('session_id')
-@click.argument('rating', type=click.IntRange(1, 5))
+@click.argument('rating', type=click.FloatRange(0, 5.0))
 @click.option('--notes', help='Additional notes about the session')
 @click.option('--tags', help='Comma-separated list of tags')
 @click.pass_obj
-def rate(manager: UserDataManager, session_id: str, rating: int, notes: Optional[str], tags: Optional[str]):
+def rate(manager: UserDataManager, session_id: str, rating: float, notes: Optional[str], tags: Optional[str]):
     """Rate a session and optionally add tags."""
     tag_list = [t.strip() for t in tags.split(',')] if tags else []
     user_rating = UserRating(
@@ -338,7 +338,7 @@ def delete_rating(manager: UserDataManager, session_id: str, user_id: str):
 @click.option('--tags', help='Comma-separated list of tags')
 @click.option('--user-id', required=True, help='User ID of the rating to update')
 @click.pass_obj
-def update_rating(manager: UserDataManager, session_id: str, rating: int, notes: Optional[str], 
+def update_rating(manager: UserDataManager, session_id: str, rating: float, notes: Optional[str], 
                  tags: Optional[str], user_id: str):
     """Update an existing rating."""
     tag_list = [t.strip() for t in tags.split(',')] if tags else []
@@ -355,14 +355,14 @@ def update_rating(manager: UserDataManager, session_id: str, rating: int, notes:
 @app.command()
 def interest(
     session_id: str = typer.Argument(..., help="Session ID to rate interest level"),
-    interest_level: int = typer.Argument(..., help="Interest level (0-5, where 0 removes the interest level)"),
+    interest_level: float = typer.Argument(..., help="Interest level (0-5.0, where 0 removes the interest level)"),
     notes: str = typer.Option("", help="Optional notes about your interest")
 ):
     """Rate your interest level in a session before attending."""
     manager = SessionManager()
     
     if interest_level < 0 or interest_level > 5:
-        console.print("[red]Interest level must be between 0 and 5 (0 removes the interest level)[/red]")
+        console.print("[red]Interest level must be between 0 and 5.0 (0 removes the interest level)[/red]")
         raise typer.Exit(1)
     
     if interest_level == 0:
