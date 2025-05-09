@@ -47,16 +47,16 @@ class SessionManager:
                     "session_id": pd.Series(dtype="string"),
                     "rating": pd.Series(dtype="float64"),
                     "notes": pd.Series(dtype="string"),
-                    "timestamp": pd.Series(dtype="datetime64[ns, UTC]"),
+                    "timestamp": pd.Series(dtype="int64"),  # Store as milliseconds
                     "interest_level": pd.Series(dtype="float64"),
                     "interest_notes": pd.Series(dtype="string"),
-                    "interest_timestamp": pd.Series(dtype="datetime64[ns, UTC]")
+                    "interest_timestamp": pd.Series(dtype="int64")  # Store as milliseconds
                 })
             else:  # tags.jsonl
                 return pd.DataFrame({
                     "session_id": pd.Series(dtype="string"),
                     "tags": pd.Series(dtype="object"),  # List of strings
-                    "timestamp": pd.Series(dtype="datetime64[ns, UTC]")
+                    "timestamp": pd.Series(dtype="int64")  # Store as milliseconds
                 })
         
         try:
@@ -66,14 +66,30 @@ class SessionManager:
                 df["session_id"] = df["session_id"].astype("string")
                 df["rating"] = df["rating"].astype("float64")
                 df["notes"] = df["notes"].astype("string")
-                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+                
+                # Handle timestamps more carefully
+                if "timestamp" in df.columns:
+                    # First convert to numeric, coercing non-numeric values to NaN
+                    df["timestamp"] = pd.to_numeric(df["timestamp"], errors='coerce')
+                    # Then replace NaN with 0 and convert to int64
+                    df["timestamp"] = df["timestamp"].fillna(0).astype("int64")
+                
+                if "interest_timestamp" in df.columns:
+                    # First convert to numeric, coercing non-numeric values to NaN
+                    df["interest_timestamp"] = pd.to_numeric(df["interest_timestamp"], errors='coerce')
+                    # Then replace NaN with 0 and convert to int64
+                    df["interest_timestamp"] = df["interest_timestamp"].fillna(0).astype("int64")
+                
                 df["interest_level"] = df["interest_level"].astype("float64")
                 df["interest_notes"] = df["interest_notes"].astype("string")
-                df["interest_timestamp"] = pd.to_datetime(df["interest_timestamp"], utc=True)
             else:  # tags.jsonl
                 df["session_id"] = df["session_id"].astype("string")
                 df["tags"] = df["tags"].astype("object")
-                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+                if "timestamp" in df.columns:
+                    # First convert to numeric, coercing non-numeric values to NaN
+                    df["timestamp"] = pd.to_numeric(df["timestamp"], errors='coerce')
+                    # Then replace NaN with 0 and convert to int64
+                    df["timestamp"] = df["timestamp"].fillna(0).astype("int64")
             return df
         except Exception as e:
             logger.error(f"Error loading {file_path}: {e}")
@@ -83,6 +99,7 @@ class SessionManager:
         """Save user data (ratings or tags) to JSONL file."""
         file_path = self.user_dir / filename
         try:
+            # No need to convert timestamps since they're already stored as milliseconds
             df.to_json(file_path, orient="records", lines=True)
         except Exception as e:
             logger.error(f"Error saving to {file_path}: {e}")
@@ -162,18 +179,26 @@ class SessionManager:
                 raise ValueError(f"Session not found: {session_id}")
             session_id = full_session_id
         
-        # Create new rating entry
-        new_rating = {
-            "session_id": session_id,
-            "rating": rating,
-            "notes": notes,
-            "timestamp": pd.Timestamp.utcnow()
-        }
-
+        # Get current timestamp in milliseconds since epoch
+        current_time_ms = int(pd.Timestamp.utcnow().timestamp() * 1000)
+        
         # Update or add rating
         if not self.ratings_df.empty and session_id in self.ratings_df["session_id"].values:
-            self.ratings_df.loc[self.ratings_df["session_id"] == session_id] = new_rating
+            # Only update the specific fields, preserving other values
+            self.ratings_df.loc[self.ratings_df["session_id"] == session_id, "rating"] = rating
+            self.ratings_df.loc[self.ratings_df["session_id"] == session_id, "notes"] = notes
+            self.ratings_df.loc[self.ratings_df["session_id"] == session_id, "timestamp"] = current_time_ms
         else:
+            # Create new rating entry
+            new_rating = {
+                "session_id": session_id,
+                "rating": rating,
+                "notes": notes,
+                "timestamp": current_time_ms,
+                "interest_level": None,
+                "interest_notes": "",
+                "interest_timestamp": None
+            }
             self.ratings_df = pd.concat([self.ratings_df, pd.DataFrame([new_rating])], ignore_index=True)
 
         self._save_user_data(self.ratings_df, "ratings.jsonl")
@@ -192,21 +217,17 @@ class SessionManager:
         # If interest level is 0, remove the interest
         if interest_level == 0:
             self.remove_interest(session_id)
-            return
+            return session_id
         
-        # Create new interest entry
-        new_interest = {
-            "session_id": session_id,
-            "interest_level": interest_level,
-            "notes": notes,
-            "timestamp": pd.Timestamp.utcnow()
-        }
-
+        # Get current timestamp in milliseconds since epoch
+        current_time_ms = int(pd.Timestamp.utcnow().timestamp() * 1000)
+        
         # Update or add interest
         if not self.ratings_df.empty and session_id in self.ratings_df["session_id"].values:
+            # Only update the specific fields, preserving other values
             self.ratings_df.loc[self.ratings_df["session_id"] == session_id, "interest_level"] = interest_level
             self.ratings_df.loc[self.ratings_df["session_id"] == session_id, "interest_notes"] = notes
-            self.ratings_df.loc[self.ratings_df["session_id"] == session_id, "interest_timestamp"] = pd.Timestamp.utcnow()
+            self.ratings_df.loc[self.ratings_df["session_id"] == session_id, "interest_timestamp"] = current_time_ms
         else:
             # Add new row with both rating and interest fields
             new_row = {
@@ -216,7 +237,7 @@ class SessionManager:
                 "timestamp": None,
                 "interest_level": interest_level,
                 "interest_notes": notes,
-                "interest_timestamp": pd.Timestamp.utcnow()
+                "interest_timestamp": current_time_ms
             }
             self.ratings_df = pd.concat([self.ratings_df, pd.DataFrame([new_row])], ignore_index=True)
 
