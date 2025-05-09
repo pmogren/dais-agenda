@@ -152,7 +152,7 @@ class SessionManager:
             logger.warning(f"Multiple sessions found with prefix '{prefix}': {', '.join(matching_sessions['session_id'])}")
         return None
 
-    def add_rating(self, session_id: str, rating: int, notes: str = "") -> None:
+    def add_rating(self, session_id: str, rating: int, notes: str = "") -> str:
         """Add or update a rating for a session."""
         # First try exact match
         if session_id not in self.sessions_df["session_id"].values:
@@ -177,8 +177,9 @@ class SessionManager:
             self.ratings_df = pd.concat([self.ratings_df, pd.DataFrame([new_rating])], ignore_index=True)
 
         self._save_user_data(self.ratings_df, "ratings.jsonl")
+        return session_id
 
-    def add_interest(self, session_id: str, interest_level: int, notes: str = "") -> None:
+    def add_interest(self, session_id: str, interest_level: int, notes: str = "") -> str:
         """Add or update interest level for a session."""
         # First try exact match
         if session_id not in self.sessions_df["session_id"].values:
@@ -220,8 +221,9 @@ class SessionManager:
             self.ratings_df = pd.concat([self.ratings_df, pd.DataFrame([new_row])], ignore_index=True)
 
         self._save_user_data(self.ratings_df, "ratings.jsonl")
+        return session_id
 
-    def remove_interest(self, session_id: str) -> None:
+    def remove_interest(self, session_id: str) -> str:
         """Remove interest level for a session."""
         # First try exact match
         if session_id not in self.sessions_df["session_id"].values:
@@ -233,7 +235,7 @@ class SessionManager:
         
         # If ratings DataFrame is empty, there's nothing to remove
         if self.ratings_df.empty:
-            return
+            return session_id
         
         # Remove interest level but keep rating if it exists
         mask = self.ratings_df["session_id"] == session_id
@@ -243,8 +245,9 @@ class SessionManager:
             self.ratings_df.loc[mask, "interest_timestamp"] = None
 
         self._save_user_data(self.ratings_df, "ratings.jsonl")
+        return session_id
 
-    def remove_rating(self, session_id: str) -> None:
+    def remove_rating(self, session_id: str) -> str:
         """Remove all ratings for a session."""
         # First try exact match
         if session_id not in self.sessions_df["session_id"].values:
@@ -256,12 +259,13 @@ class SessionManager:
         
         # If ratings DataFrame is empty, there's nothing to remove
         if self.ratings_df.empty:
-            return
+            return session_id
         
         # Remove all ratings but keep tags
         self.ratings_df = self.ratings_df[self.ratings_df["session_id"] != session_id]
 
         self._save_user_data(self.ratings_df, "ratings.jsonl")
+        return session_id
 
     def add_tags(self, session_id: str, tags: List[str]):
         """Add custom tags to a session."""

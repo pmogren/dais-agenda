@@ -349,7 +349,7 @@ def update_rating(manager: UserDataManager, session_id: str, rating: int, notes:
         tags=tag_list,
         user_id=user_id
     )
-    manager.update_rating(user_rating)
+    session_id = manager.update_rating(user_rating)
     click.echo(f"Updated rating for session {session_id}")
 
 @app.command()
@@ -366,10 +366,10 @@ def interest(
         raise typer.Exit(1)
     
     if interest_level == 0:
-        manager.remove_interest(session_id)
+        session_id = manager.remove_interest(session_id)
         console.print(f"[green]Successfully removed interest level for session {session_id}[/green]")
     else:
-        manager.add_interest(session_id, interest_level, notes)
+        session_id = manager.add_interest(session_id, interest_level, notes)
         console.print(f"[green]Successfully set interest level for session {session_id} to {interest_level}[/green]")
 
 @app.command()
